@@ -1,0 +1,9 @@
+menu "Bottie companion transport"
+    config BOTTIE_NETWORK_ENABLED
+        bool "Compile opt-in companion connection support"
+        default n
+        help
+            Does not start a connection by itself. The application must explicitly
+            call Client::start() from its live-mode background task. Credentials
+            belong in the ignored network.local.hpp, never in sdkconfig.
+endmenu
