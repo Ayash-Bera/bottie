@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bottie control v1",
+  "oneOf": [
+    {"type":"object","required":["action"],"properties":{"action":{"enum":["play","pause","previous","next"]}},"additionalProperties":false},
+    {"type":"object","required":["action","value"],"properties":{"action":{"const":"shuffle"},"value":{"type":"boolean"}},"additionalProperties":false},
+    {"type":"object","required":["action","value"],"properties":{"action":{"const":"repeat"},"value":{"enum":["off","context","track"]}},"additionalProperties":false}
+  ]
+}

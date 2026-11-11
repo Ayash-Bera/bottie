@@ -1,0 +1,21 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"Bottie playback v1",
+  "type":"object",
+  "required":["schema_version","state","track_id","title","artist","album","context","progress_ms","duration_ms","updated_at_ms","shuffle","repeat","artwork","capabilities"],
+  "additionalProperties":false,
+  "properties":{
+    "schema_version":{"const":1},
+    "state":{"enum":["playing","paused","idle","unavailable"]},
+    "track_id":{"type":"string","maxLength":128},
+    "title":{"$ref":"#/$defs/text"},"artist":{"$ref":"#/$defs/text"},"album":{"$ref":"#/$defs/text"},
+    "context":{"type":"object","required":["type","name"],"additionalProperties":false,"properties":{"type":{"enum":["playlist","album","unknown"]},"name":{"$ref":"#/$defs/text"}}},
+    "progress_ms":{"type":"integer","minimum":0,"maximum":86400000},
+    "duration_ms":{"type":"integer","minimum":0,"maximum":86400000},
+    "updated_at_ms":{"type":"integer","minimum":0,"maximum":9007199254740991},
+    "shuffle":{"type":"boolean"},"repeat":{"enum":["off","context","track"]},
+    "artwork":{"type":"object","required":["url","width","height"],"additionalProperties":false,"properties":{"url":{"type":"string","maxLength":256},"width":{"type":"integer","minimum":0,"maximum":240},"height":{"type":"integer","minimum":0,"maximum":240}}},
+    "capabilities":{"type":"object","required":["play","pause","previous","next","shuffle","repeat"],"additionalProperties":false,"properties":{"play":{"type":"boolean"},"pause":{"type":"boolean"},"previous":{"type":"boolean"},"next":{"type":"boolean"},"shuffle":{"type":"boolean"},"repeat":{"type":"boolean"}}}
+  },
+  "$defs":{"text":{"type":"string","maxLength":256}}
+}
