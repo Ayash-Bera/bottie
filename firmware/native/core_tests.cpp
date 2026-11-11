@@ -196,13 +196,13 @@ void artwork_render_checks() {
     Model model;
     CHECK(ingest(model, valid, 0) == Error::none);
     CHECK(render(model, 0, frame, &art));
-    CHECK(frame.pixels[116 * 130 + 34] == 0xeef7 && frame.pixels[116 * 130 + 40] == 0x0843);
-    CHECK(frame.pixels[116 * 130 + 93] == 0xeef7 && frame.pixels[116 * 130 + 85] == 0x0843);
+    CHECK(frame.pixels[111 * 130 + 34] == 0xeef7 && frame.pixels[111 * 130 + 40] == 0x0882);
+    CHECK(frame.pixels[111 * 130 + 93] == 0xeef7 && frame.pixels[111 * 130 + 85] == 0x0882);
     CHECK(pixels.front() == 0xdead && pixels.back() == 0xdead);
     for (size_t y = 0; y < 128; ++y) CHECK(frame.pixels[y*130 + 128] == 0xdead && frame.pixels[y*130 + 129] == 0xdead);
-    for (int y = 39; y < 70; ++y)
-        for (int x = 16; x < 79; ++x) CHECK(frame.pixels[y*130 + x] == 0xf800);
-    CHECK(frame.pixels[23*130 + 16] != 0xf800 && frame.pixels[85*130 + 78] != 0xf800);
+    for (int y = 35; y < 62; ++y)
+        for (int x = 11; x < 66; ++x) CHECK(frame.pixels[y*130 + x] == 0xf800);
+    CHECK(frame.pixels[21*130 + 11] != 0xf800 && frame.pixels[75*130 + 65] != 0xf800);
     uint32_t first = frame_hash(frame);
     CHECK(render(model, 0, frame, &art) && first == frame_hash(frame));
     Frame invalid = frame; invalid.capacity = 1;
@@ -211,13 +211,13 @@ void artwork_render_checks() {
     CHECK(!render(model, 0, invalid));
     std::set<uint32_t> families;
     Model idle;
-    for (uint32_t family = 0; family < 5; ++family) {
-        idle.planet_seed = 10 + family;
+    for (uint32_t family = 0; family < 6; ++family) {
+        idle.planet_seed = 12 + family;
         CHECK(render(idle, 0, frame)); families.insert(frame_hash(frame));
         first = frame_hash(frame);
         CHECK(render(idle, 1800, frame) && first != frame_hash(frame));
     }
-    CHECK(families.size() == 5);
+    CHECK(families.size() == 6);
     idle.planet_seed = 10;
     CHECK(render(idle, 0, frame)); first = frame_hash(frame);
     CHECK(render(idle, 1800, frame) && first != frame_hash(frame));
@@ -228,9 +228,9 @@ void artwork_render_checks() {
     CHECK(render(idle, 0, recovered));
     CHECK(render(model, 0, recovered, &art));
     CHECK(portrait.front() == 0xbeef && portrait.back() == 0xbeef);
-    for (int y = 82; y < 154; ++y)
-        for (int x = 10; x < 154; ++x) CHECK(recovered.pixels[y * 240 + x] == 0xf800);
-    CHECK(recovered.pixels[118 * 240 + 239] == 0x0843);
+    for (int y = 82; y < 146; ++y)
+        for (int x = 22; x < 150; ++x) CHECK(recovered.pixels[y * 240 + x] == 0xf800);
+    CHECK(recovered.pixels[118 * 240 + 239] == 0x0882);
 
     std::strcpy(model.snapshot.title, "A'B-\"LIVE\" (2026)");
     CHECK(render(model, 0, recovered, &art));
@@ -246,6 +246,75 @@ void artwork_render_checks() {
     std::strcpy(model.snapshot.title, "A?B-?LIVE? ?2026?");
     CHECK(render(model, 0, recovered, &art) && frame_hash(recovered) != punctuation_hash);
 }
+
+void ui_checks() {
+    std::vector<uint16_t> pixels(240*296), lower(pixels.size()), band(240*16);
+    Frame frame{pixels.data(),pixels.size(),240,296,240};
+    Model model;
+    CHECK(ingest(model,valid,0) == Error::none);
+    const char* alphabet = "abcdefghijklmnopqrstuvwxyz";
+    for (char* field : {model.snapshot.title,model.snapshot.artist,model.snapshot.album,model.snapshot.context_name})
+        std::strcpy(field,alphabet);
+    CHECK(render(model,0,frame)); lower = pixels;
+    for (char* field : {model.snapshot.title,model.snapshot.artist,model.snapshot.album,model.snapshot.context_name})
+        for (char* p = field; *p; ++p) *p = char(*p-'a'+'A');
+    CHECK(render(model,0,frame) && pixels == lower);
+    std::strcpy(model.snapshot.title,"a");
+    CHECK(render(model,0,frame));
+    for (int y = 194; y < 198; ++y) for (int x = 115; x < 125; ++x) CHECK(pixels[y*240+x] == 0x0882);
+    CHECK(pixels[198*240+117] == 0xeef7);
+    std::strcpy(model.snapshot.title,"b");
+    CHECK(render(model,0,frame) && pixels[194*240+115] == 0xeef7);
+
+    auto bytes = artwork_bytes(96,96);
+    Artwork art;
+    CHECK(parse_artwork(bytes.data(),bytes.size(),art));
+    CHECK(render(model,0,frame,&art));
+    auto red = pixels[234*240+20];
+    for (size_t n = 16; n < bytes.size(); n += 2) { bytes[n] = 31; bytes[n+1] = 0; }
+    CHECK(render(model,0,frame,&art));
+    auto blue = pixels[234*240+20];
+    CHECK(red != blue && (red>>11) > (red&31) && (blue&31) > (blue>>11));
+    CHECK(render(model,0,frame));
+    auto neutral = pixels[234*240+20];
+    for (size_t n = 16; n < bytes.size(); n += 2) { bytes[n] = 0x10; bytes[n+1] = 0x84; }
+    CHECK(render(model,0,frame,&art) && pixels[234*240+20] == neutral);
+    model.snapshot.artwork_url[0] = 0;
+    for (size_t n = 16; n < bytes.size(); n += 2) { bytes[n] = 31; bytes[n+1] = 0; }
+    CHECK(render(model,0,frame,&art) && pixels[234*240+20] == neutral);
+    std::strcpy(model.snapshot.artwork_url,"/v1/artwork/new");
+    CHECK(render(model,0,frame,&art) && pixels[234*240+20] == blue);
+
+    for (unsigned y = 0; y < 96; ++y) for (unsigned x = 0; x < 96; ++x) {
+        uint16_t value = uint16_t((x*31/95)<<11 | (y*63/95)<<5 | ((x+y)%32));
+        bytes[16+(y*96+x)*2] = value & 255; bytes[17+(y*96+x)*2] = value>>8;
+    }
+    CHECK(render(model,0,frame,&art));
+    for (unsigned y = 0; y < 128; ++y) for (unsigned x = 0; x < 128; ++x) {
+        size_t offset = 16+((y*96/128)*96+x*96/128)*2;
+        CHECK(pixels[(50+y)*240+22+x] == uint16_t(bytes[offset] | (uint16_t(bytes[offset+1])<<8)));
+    }
+    uint32_t playing = frame_hash(frame);
+    CHECK(render(model,4000,frame,&art) && playing != frame_hash(frame));
+    std::set<uint16_t> grooves;
+    for (int y = 72; y < 155; ++y) for (int x = 184; x < 208; ++x) grooves.insert(pixels[y*240+x]);
+    CHECK(grooves.size() >= 8);
+
+    for (auto state : {Playback::playing,Playback::idle,Playback::paused,Playback::unavailable}) {
+        model.snapshot.state = state;
+        for (unsigned family = 0; family < 6; ++family) {
+            model.planet_seed = 12+family;
+            CHECK(render(model,1800,frame,&art));
+            for (uint16_t y = 0; y < 296; y += 16) {
+                uint16_t rows = std::min<uint16_t>(16,296-y);
+                CHECK(render(model,1800,{band.data(),band.size(),240,296,240,y,rows},&art));
+                CHECK(std::equal(band.begin(),band.begin()+240*rows,pixels.begin()+240*y));
+            }
+            if (state != Playback::playing) for (int y = 280; y < 296; ++y)
+                for (int x = 0; x < 240; ++x) CHECK(pixels[y*240+x] == 0x0882);
+        }
+    }
+}
 } // namespace
 
 int main() {
@@ -253,5 +322,6 @@ int main() {
     state_checks();
     control_checks();
     artwork_render_checks();
+    ui_checks();
     std::puts("BOTTIE_CORE_CHECKS_OK parser/state/controls/artwork/render");
 }
