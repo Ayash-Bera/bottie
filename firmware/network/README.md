@@ -43,7 +43,7 @@ The device token must be a separate 16..256-byte bearer token using letters, dig
 
 The component exclusively owns Wi-Fi station setup and refuses an already initialized Wi-Fi driver/default station interface. Integrate shared Wi-Fi ownership explicitly before combining it with another station manager. Configuration strings are copied except the certificate, which must outlive the client.
 
-Numeric commissioning logs distinguish station start, association, address acquisition, driver disconnect reasons, connect return codes and client timeouts. They include event counts, channel, authentication mode and disconnect RSSI, without network names, hardware addresses or credentials. A client timeout is logged before its disconnect call so it can be distinguished from a preceding driver failure.
+Numeric commissioning logs distinguish station start, association, address acquisition, driver disconnect reasons, connect return codes and client timeouts. They include event counts, channel, authentication mode and disconnect RSSI, without network names, hardware addresses or credentials. The end event's timeout flag identifies a client timeout. It prints after the disconnect call; callbacks can arrive before or after that line.
 
 ## Bounds and failures
 
