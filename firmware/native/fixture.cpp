@@ -19,6 +19,7 @@ int main(int argc, char** argv) {
     const char* art_path = nullptr;
     const char* frame_path = nullptr;
     uint64_t seed = 0x74b39ac1U;
+    uint16_t width = 128, height = 128;
     bottie::Button button{};
     for (int n = 1; n < argc; ++n) {
         if (std::strcmp(argv[n], "--offline") == 0) offline = true;
@@ -26,6 +27,10 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[n], "--wall-ms") == 0 && n + 1 < argc) { if (!number(argv[++n], wall)) return 2; }
         else if (std::strcmp(argv[n], "--art") == 0 && n + 1 < argc) art_path = argv[++n];
         else if (std::strcmp(argv[n], "--frame") == 0 && n + 1 < argc) frame_path = argv[++n];
+        else if (std::strcmp(argv[n], "--profile") == 0 && n + 1 < argc) {
+            if (std::strcmp(argv[++n], "recovered") != 0) return 2;
+            width = 240; height = 296;
+        }
         else if (std::strcmp(argv[n], "--seed") == 0 && n + 1 < argc) {
             if (!number(argv[++n], seed) || seed > UINT32_MAX) return 2;
         }
@@ -39,7 +44,7 @@ int main(int argc, char** argv) {
             if (!found) return 2;
             control = true;
         } else {
-            std::fputs("Usage: bottie_fixture [--control BUTTON] [--elapsed-ms N] [--wall-ms N] [--offline] [--art FILE] [--frame FILE.ppm] [--seed N] < playback.json\n", stderr);
+            std::fputs("Usage: bottie_fixture [--control BUTTON] [--elapsed-ms N] [--wall-ms N] [--offline] [--art FILE] [--frame FILE.ppm] [--seed N] [--profile recovered] < playback.json\n", stderr);
             return 2;
         }
     }
@@ -75,15 +80,16 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    std::array<uint16_t, 128 * 128> pixels{};
-    bottie::Frame frame{pixels.data(), pixels.size(), 128, 128, 128};
+    std::array<uint16_t, bottie::max_frame_width * bottie::max_frame_height> pixels{};
+    bottie::Frame frame{pixels.data(), pixels.size(), width, height, width};
     model.tick(elapsed);
     if (!bottie::render(model, elapsed, frame, art_path ? &artwork : nullptr)) return 1;
     if (frame_path) {
         FILE* file = std::fopen(frame_path, "wb");
         if (!file) return 2;
-        bool ok = std::fprintf(file, "P6\n128 128\n255\n") > 0;
-        for (uint16_t pixel : pixels) {
+        bool ok = std::fprintf(file, "P6\n%u %u\n255\n", unsigned(width), unsigned(height)) > 0;
+        for (size_t index = 0; index < size_t(width) * height; ++index) {
+            uint16_t pixel = pixels[index];
             uint8_t rgb[] = {static_cast<uint8_t>(((pixel >> 11) & 31) * 255 / 31),
                              static_cast<uint8_t>(((pixel >> 5) & 63) * 255 / 63),
                              static_cast<uint8_t>((pixel & 31) * 255 / 31)};

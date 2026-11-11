@@ -196,11 +196,13 @@ void artwork_render_checks() {
     Model model;
     CHECK(ingest(model, valid, 0) == Error::none);
     CHECK(render(model, 0, frame, &art));
+    CHECK(frame.pixels[116 * 130 + 34] == 0xeef7 && frame.pixels[116 * 130 + 40] == 0x0843);
+    CHECK(frame.pixels[116 * 130 + 93] == 0xeef7 && frame.pixels[116 * 130 + 85] == 0x0843);
     CHECK(pixels.front() == 0xdead && pixels.back() == 0xdead);
     for (size_t y = 0; y < 128; ++y) CHECK(frame.pixels[y*130 + 128] == 0xdead && frame.pixels[y*130 + 129] == 0xdead);
     for (int y = 39; y < 70; ++y)
-        for (int x = 22; x < 85; ++x) CHECK(frame.pixels[y*130 + x] == 0xf800);
-    CHECK(frame.pixels[23*130 + 22] != 0xf800 && frame.pixels[85*130 + 84] != 0xf800);
+        for (int x = 16; x < 79; ++x) CHECK(frame.pixels[y*130 + x] == 0xf800);
+    CHECK(frame.pixels[23*130 + 16] != 0xf800 && frame.pixels[85*130 + 78] != 0xf800);
     uint32_t first = frame_hash(frame);
     CHECK(render(model, 0, frame, &art) && first == frame_hash(frame));
     Frame invalid = frame; invalid.capacity = 1;
@@ -221,6 +223,14 @@ void artwork_render_checks() {
     CHECK(render(idle, 1800, frame) && first != frame_hash(frame));
     std::array<uint16_t, 240 * 240> large{};
     CHECK(render(idle, 0, {large.data(), large.size(), 240, 240, 240}));
+    std::vector<uint16_t> portrait(240 * 296 + 2, 0xbeef);
+    Frame recovered{portrait.data() + 1, portrait.size() - 2, 240, 296, 240};
+    CHECK(render(idle, 0, recovered));
+    CHECK(render(model, 0, recovered, &art));
+    CHECK(portrait.front() == 0xbeef && portrait.back() == 0xbeef);
+    for (int y = 82; y < 154; ++y)
+        for (int x = 10; x < 154; ++x) CHECK(recovered.pixels[y * 240 + x] == 0xf800);
+    CHECK(recovered.pixels[118 * 240 + 239] == 0x0843);
 }
 } // namespace
 

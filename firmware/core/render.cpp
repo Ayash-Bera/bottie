@@ -57,14 +57,15 @@ const uint8_t* glyph(char c) {
     return unknown;
 }
 void text(Canvas& canvas, int x, int y, const char* value, int right, uint16_t color) {
-    for (size_t i = 0; value[i] && x + 5 <= right; ++i) {
+    int scale = canvas.frame.width >= 200 ? 2 : 1;
+    for (size_t i = 0; value[i] && x + 5 * scale <= right; ++i) {
         unsigned char c = static_cast<unsigned char>(value[i]);
         if ((c & 0xc0) == 0x80) continue;
         const uint8_t* columns = glyph(c < 128 ? static_cast<char>(c) : '?');
         for (int col = 0; col < 5; ++col)
             for (int row = 0; row < 7; ++row)
-                if (columns[col] & (1 << row)) canvas.pixel(x + col, y + row, color);
-        x += 6;
+                if (columns[col] & (1 << row)) canvas.rect(x + col * scale, y + row * scale, scale, scale, color);
+        x += 6 * scale;
     }
 }
 
@@ -137,60 +138,67 @@ void cover(Canvas& canvas, int x, int y, int side, const Artwork* art) {
 }
 
 void controls(Canvas& canvas, const Model& model, uint64_t now) {
-    static constexpr uint8_t icons[][9] = {
-        {0,65,34,20,8,20,34,69,2}, {0,66,70,78,94,78,70,66,0},
-        {0,66,66,66,66,66,66,66,0}, {0,33,49,57,61,57,49,33,0},
-        {0,28,34,65,64,65,34,28,0}
+    int scale = canvas.frame.width >= 200 ? 2 : 1;
+    static constexpr uint16_t icons[][9] = {
+        {64,128,455,168,80,168,455,128,64}, {0,129,193,225,249,225,193,129,0},
+        {0,198,198,198,198,198,198,198,0}, {0,258,262,270,318,270,262,258,0},
+        {32,64,254,66,170,132,254,4,8}
     };
-    static constexpr uint8_t play[9] = {0,2,6,14,30,14,6,2,0};
+    static constexpr uint16_t play[9] = {0,4,12,28,60,28,12,4,0};
     for (unsigned n = 0; n < 5; ++n) {
         Intent intent;
         bool enabled = model.intent(static_cast<Button>(n), now, intent);
         bool active = (n == 0 && model.snapshot.shuffle) || (n == 4 && model.snapshot.repeat != Repeat::off);
         uint16_t color = enabled ? (active ? accent : ink) : dim;
-        int x = (int(n) * 2 + 1) * canvas.frame.width / 10 - 4;
-        int y = canvas.frame.height - 13;
-        const uint8_t* rows = n == 2 && model.effective_state(now) != Playback::playing ? play : icons[n];
+        int x = (int(n) * 2 + 1) * canvas.frame.width / 10 - 4 * scale;
+        int y = canvas.frame.height - 13 * scale;
+        const uint16_t* rows = n == 2 && model.effective_state(now) != Playback::playing ? play : icons[n];
+        if (n == 2) {
+            canvas.circle(x + 4 * scale, y + 4 * scale, 9 * scale - 1, enabled ? accent : dim);
+            color = background;
+        }
         for (int row = 0; row < 9; ++row)
-            for (int col = 0; col < 7; ++col)
-                if (rows[row] & (1 << col)) canvas.pixel(x + col, y + row, color);
-        if (n == 4 && model.snapshot.repeat == Repeat::track) canvas.pixel(x + 3, y + 4, color);
+            for (int col = 0; col < 9; ++col)
+                if (rows[row] & (1 << col)) canvas.rect(x + col * scale, y + row * scale, scale, scale, color);
+        if (n == 4 && model.snapshot.repeat == Repeat::track) canvas.rect(x + 3 * scale, y + 4 * scale, scale, scale, color);
     }
 }
 } // namespace
 
 bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* artwork) {
-    if (!frame.pixels || frame.width < 128 || frame.height < 128 || frame.width > max_art_side ||
-        frame.height > max_art_side || frame.stride < frame.width ||
+    if (!frame.pixels || frame.width < 128 || frame.height < 128 || frame.width > max_frame_width ||
+        frame.height > max_frame_height || frame.stride < frame.width ||
         frame.capacity < size_t(frame.stride) * frame.height) return false;
     Canvas canvas{frame};
+    int scale = frame.width >= 200 ? 2 : 1;
     canvas.rect(0, 0, frame.width, frame.height, background);
     Playback state = model.effective_state(now_ms);
     if (state == Playback::playing) {
         const auto& snapshot = model.snapshot;
         bool playlist = snapshot.context_type == Context::playlist && snapshot.context_name[0];
-        text(canvas, 4, 3, playlist ? snapshot.context_name : snapshot.album, frame.width - 4, accent);
-        if (playlist) text(canvas, 4, 12, snapshot.album, frame.width - 4, dim);
-        int side = std::min(int(frame.width) * 3 / 5, int(frame.height) - 65);
-        int left = (frame.width - side - side/3) / 2;
-        int cy = 23 + side/2, disc_x = left + side + side/5;
+        text(canvas, 4 * scale, 3 * scale, playlist ? snapshot.context_name : snapshot.album, frame.width - 4 * scale, accent);
+        if (playlist) text(canvas, 4 * scale, 12 * scale, snapshot.album, frame.width - 4 * scale, dim);
+        int side = std::min(int(frame.width) * 3 / 5, int(frame.height) - 65 * scale);
+        if (side <= 0) return false;
+        int left = (frame.width - side - side/5 - side/3) / 2;
+        int cy = 23 * scale + side/2, disc_x = left + side + side/5;
         canvas.circle(disc_x, cy, side/3, 0x2949);
         canvas.circle(disc_x, cy, side/4, 0x1084);
         canvas.circle(disc_x, cy, side/10, accent);
-        cover(canvas, left, 23, side, snapshot.artwork_url[0] ? artwork : nullptr);
-        text(canvas, 4, frame.height - 39, snapshot.title, frame.width - 4, ink);
-        text(canvas, 4, frame.height - 30, snapshot.artist, frame.width - 4, dim);
-        canvas.rect(4, frame.height - 20, frame.width - 8, 2, dim);
+        cover(canvas, left, 23 * scale, side, snapshot.artwork_url[0] ? artwork : nullptr);
+        text(canvas, 4 * scale, frame.height - 39 * scale, snapshot.title, frame.width - 4 * scale, ink);
+        text(canvas, 4 * scale, frame.height - 30 * scale, snapshot.artist, frame.width - 4 * scale, dim);
+        canvas.rect(4 * scale, frame.height - 20 * scale, frame.width - 8 * scale, 2 * scale, dim);
         if (snapshot.duration_ms) {
-            int width = static_cast<int>(model.progress(now_ms) * (frame.width - 8) / snapshot.duration_ms);
-            canvas.rect(4, frame.height - 20, width, 2, accent);
+            int width = static_cast<int>(model.progress(now_ms) * (frame.width - 8 * scale) / snapshot.duration_ms);
+            canvas.rect(4 * scale, frame.height - 20 * scale, width, 2 * scale, accent);
         }
     } else {
         for (int y = 14; y < frame.height - 16; ++y)
             for (int x = 2; x < frame.width - 2; ++x)
                 if (noise(uint32_t(x / 2) + uint32_t(y / 2) * 997) % 733 == 0) canvas.pixel(x, y, dim);
         planet(canvas, model, now_ms);
-        text(canvas, 4, 3, state == Playback::paused ? "PAUSED" : state == Playback::idle ? "ORBIT" : "OFFLINE", frame.width - 4, accent);
+        text(canvas, 4 * scale, 3 * scale, state == Playback::paused ? "PAUSED" : state == Playback::idle ? "ORBIT" : "OFFLINE", frame.width - 4 * scale, accent);
     }
     controls(canvas, model, now_ms);
     return true;

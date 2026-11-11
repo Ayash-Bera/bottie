@@ -1,9 +1,15 @@
 if(BOTTIE_HEADLESS)
     set(app_sources "headless.cpp" "../board/simulated.cpp")
+    if(BOTTIE_RECOVERED_PANEL)
+        list(APPEND app_sources "../board/recovered_profile.cpp" "../board/recovered_spi.cpp")
+    endif()
 else()
     set(app_sources "smoke.c")
 endif()
 idf_component_register(SRCS ${app_sources}
-                       PRIV_REQUIRES spi_flash bottie_core esp_timer
+                       PRIV_REQUIRES spi_flash bottie_core esp_timer esp_driver_spi esp_driver_gpio
                        INCLUDE_DIRS "../board")
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_17)
+if(BOTTIE_RECOVERED_PANEL)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE BOTTIE_RECOVERED_PANEL=1 BOTTIE_FRAME_WIDTH=240 BOTTIE_FRAME_HEIGHT=296)
+endif()

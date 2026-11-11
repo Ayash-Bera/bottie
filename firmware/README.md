@@ -2,6 +2,8 @@
 
 The portable C++17 core accepts protocol v1 playback snapshots, produces five control intents, validates BTAR artwork and renders into RGB565 memory. The ESP32-S3 profile uses synthetic playback and input. It configures no display, touch, network or PSRAM driver. Its 128 by 128 framebuffer is a simulation choice, not a measured panel specification. No binary has been flashed or run on hardware.
 
+An optional [recovered installed-app profile](board/recovered-profile.md) supports the traced 240 by 296 address window and a separately compiled SPI adapter. This is evidence of the installed configuration, not physical validation. The default profile remains headless.
+
 ## Local checks
 
 From the repository root, using the installed pinned SDK:
@@ -30,6 +32,8 @@ python3 firmware/tools/check-fixtures.py build/firmware/native/bottie_fixture pr
 Buttons are `shuffle`, `previous`, `play_pause`, `next`, `repeat`. Control mode prints the POST body, never sends it. Normal mode prints effective state, progress, frame hash and whether artwork was decoded. Exit codes: 0 accepted, 1 invalid snapshot/artwork, 2 usage or I/O error, 3 control unavailable. The host owns control delivery and must refresh playback after success. Never blindly retry previous/next after ambiguous delivery.
 
 `--frame FILE.ppm` exports the actual 128 by 128 native-rendered framebuffer as RGB pixels. `--seed N` selects a deterministic planet seed. These are simulated frames, never evidence of a working physical display.
+
+Add `--profile recovered` to render and export at 240 by 296, with larger pixel text and controls. Artwork remains bounded to 240 per side independently of the framebuffer dimensions.
 
 The core allocates no dynamic memory. JSON is limited to 8192 bytes, 256 tokens, nesting depth 8 and 64-byte keys. Track IDs are at most 128 UTF-8 bytes; title, artist, album, context name and artwork URL at most 256. Unknown fields are structurally validated and ignored within these bounds. Missing or null context/artwork is accepted. Malformed snapshots leave the prior snapshot intact and mark the model offline. JSON integers use decimal digits, with no fractional or exponent notation for protocol integer fields. Timestamps are bounded by 9007199254740991; duration by 86400000. Strings reject invalid UTF-8, unpaired surrogates and embedded NUL.
 

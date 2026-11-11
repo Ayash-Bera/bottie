@@ -8,6 +8,8 @@ namespace bottie {
 
 constexpr size_t max_json_bytes = 8192;
 constexpr size_t max_art_side = 240;
+constexpr uint16_t max_frame_width = 240;
+constexpr uint16_t max_frame_height = 296;
 constexpr uint64_t max_json_integer = 9007199254740991ULL;
 constexpr uint64_t stale_after_ms = 15000;
 constexpr uint64_t planet_period_ms = 30000;

@@ -1,5 +1,8 @@
 #include "bottie/core.hpp"
 #include "simulated.hpp"
+#if BOTTIE_RECOVERED_PANEL
+#include "recovered_spi.hpp"
+#endif
 
 #include <array>
 #include <cstdio>
@@ -8,13 +11,27 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#ifndef BOTTIE_FRAME_WIDTH
+#define BOTTIE_FRAME_WIDTH 128
+#define BOTTIE_FRAME_HEIGHT 128
+#endif
+
 extern "C" void app_main(void) {
     static bottie::Model model;
+#if BOTTIE_RECOVERED_PANEL
+    static bottie::RecoveredBoard board;
+#else
     static bottie::SimulatedBoard board;
-    static std::array<uint16_t, 128 * 128> pixels;
+#endif
+    static std::array<uint16_t, BOTTIE_FRAME_WIDTH * BOTTIE_FRAME_HEIGHT> pixels;
     static std::array<char, bottie::max_json_bytes + 1> json;
-    bottie::Frame frame{pixels.data(), pixels.size(), 128, 128, 128};
+    bottie::Frame frame{pixels.data(), pixels.size(), BOTTIE_FRAME_WIDTH, BOTTIE_FRAME_HEIGHT, BOTTIE_FRAME_WIDTH};
+#if BOTTIE_RECOVERED_PANEL
+    std::puts("Recovered panel profile: physical behavior unverified; synthetic playback, no touch/network/PSRAM.");
+    if (!board.initialize()) { std::puts("Recovered panel initialization stopped"); return; }
+#else
     std::puts("Bottie simulated headless profile. No display, touch, network or PSRAM driver is configured.");
+#endif
     uint64_t poll_at = 0;
     for (;;) {
         uint64_t now = board.monotonic_ms();
