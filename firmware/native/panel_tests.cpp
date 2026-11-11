@@ -1,4 +1,5 @@
 #include "recovered_profile.hpp"
+#include "frame_diagnostics.hpp"
 
 #include <array>
 #include <cstdio>
@@ -54,6 +55,15 @@ int main() {
     CHECK(transfer.started && transfer.ended && transfer.bytes.size() == 142080);
     CHECK((transfer.commands == std::vector<unsigned>{0x2a,0x2b}));
     CHECK((transfer.parameters[1] == std::vector<uint8_t>{0,0,1,0x27}));
+    bottie::PixelDiagnostics source;
+    source.add(frame);
+    bottie::WireDiagnostics wire;
+    for (size_t start = 0; start < transfer.bytes.size(); start += 3840)
+        wire.add(transfer.bytes.data() + start, std::min(size_t(3840), transfer.bytes.size() - start));
+    CHECK(source.count == 240 * 296 && source.first == 0 && source.minimum == 0 && source.maximum == 0xffef);
+    CHECK(source.little_hash == bottie::frame_hash(frame) && source.wire_hash == wire.hash);
+    CHECK(wire.bytes == 142080 && wire.first0 == 0 && wire.first1 == 0);
+    CHECK(source.different == source.count - 2);
     for (size_t y = 0; y < 296; ++y) {
         for (size_t x = 0; x < 240; ++x) {
             size_t offset = (y * 240 + x) * 2;

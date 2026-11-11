@@ -1,4 +1,5 @@
 #include "bottie/core.hpp"
+#include "frame_diagnostics.hpp"
 #include "simulated.hpp"
 #if BOTTIE_LIVE_COMPANION
 #include "live_runtime.hpp"
@@ -54,6 +55,7 @@ extern "C" void app_main(void) {
     uint64_t poll_at = 0;
 #endif
     uint64_t report_at = 0, frame_count = 0, frame_errors = 0, max_frame_us = 0;
+    bool diagnosed_idle = false, diagnosed_playing = false;
     for (;;) {
         const uint64_t started_us = esp_timer_get_time();
         uint64_t now = board.monotonic_ms();
@@ -88,10 +90,38 @@ extern "C" void app_main(void) {
 #else
         const bottie::Artwork* artwork = nullptr;
 #endif
+        const bool playing = model.effective_state(now) == bottie::Playback::playing;
+        const bool diagnose = (!playing && !diagnosed_idle) || (playing && artwork && !diagnosed_playing);
+        bottie::PixelDiagnostics frame_diagnostics;
+        if (diagnose) {
+            std::printf("BOTTIE_FRAME playing=%u\n", static_cast<unsigned>(playing));
+            if (playing) {
+                diagnosed_playing = true;
+                bottie::WireDiagnostics art_diagnostics;
+                art_diagnostics.add(artwork->pixels, size_t(artwork->stride) * artwork->height);
+                std::printf("BOTTIE_ART bytes=%u first0=%u first1=%u hash=%u\n",
+                    static_cast<unsigned>(art_diagnostics.bytes), static_cast<unsigned>(art_diagnostics.first0),
+                    static_cast<unsigned>(art_diagnostics.first1), static_cast<unsigned>(art_diagnostics.hash));
+            } else diagnosed_idle = true;
+#if BOTTIE_RECOVERED_PANEL
+            board.diagnose_frame();
+#endif
+        }
         for (uint16_t y = 0; y < frame.height; y += stored_rows) {
             frame.storage_y = y;
             frame.storage_height = std::min(stored_rows, static_cast<uint16_t>(frame.height - y));
-            if (!bottie::render(model, now, frame, artwork) || !board.present(frame)) {
+            bool rendered = bottie::render(model, now, frame, artwork);
+            if (rendered && diagnose) {
+                bottie::PixelDiagnostics band;
+                band.add(frame);
+                frame_diagnostics.add(frame);
+                std::printf("BOTTIE_PIXELS y=%u rows=%u first=%u min=%u max=%u different=%u hash=%u wire=%u cumulative=%u\n",
+                    static_cast<unsigned>(y), static_cast<unsigned>(frame.rows()), static_cast<unsigned>(band.first),
+                    static_cast<unsigned>(band.minimum), static_cast<unsigned>(band.maximum), static_cast<unsigned>(band.different),
+                    static_cast<unsigned>(band.little_hash), static_cast<unsigned>(band.wire_hash),
+                    static_cast<unsigned>(frame_diagnostics.wire_hash));
+            }
+            if (!rendered || !board.present(frame)) {
                 std::puts("Frame rejected");
                 ++frame_errors;
                 break;

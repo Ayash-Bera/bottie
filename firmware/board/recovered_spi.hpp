@@ -1,6 +1,7 @@
 #pragma once
 
 #include "recovered_profile.hpp"
+#include "frame_diagnostics.hpp"
 #include "simulated.hpp"
 
 #include "driver/spi_master.h"
@@ -15,6 +16,7 @@ public:
     InputEvent input() override { return {}; }
     bool control(const char*, size_t) override { return false; }
     bool present(const Frame& frame) override;
+    void diagnose_frame() { diagnostics_ = {}; diagnosing_ = true; }
 private:
     bool reset_level(bool high) override;
     void delay_ms(uint16_t milliseconds) override;
@@ -26,5 +28,7 @@ private:
     SimulatedBoard fixture_;
     spi_device_handle_t device_{};
     bool bus_ready_{}, configured_{}, initialized_{};
+    WireDiagnostics diagnostics_;
+    bool diagnosing_{};
 };
 } // namespace bottie

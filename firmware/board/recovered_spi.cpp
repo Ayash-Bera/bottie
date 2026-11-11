@@ -80,11 +80,22 @@ bool RecoveredBoard::begin_pixels() {
     if (!ok) level(recovered::cs, true);
     return ok;
 }
-bool RecoveredBoard::pixels(const uint8_t* bytes, size_t length) { return send(bytes, length); }
+bool RecoveredBoard::pixels(const uint8_t* bytes, size_t length) {
+    if (diagnosing_) {
+        diagnostics_.add(bytes, length);
+        if (diagnostics_.bytes == length || diagnostics_.bytes == recovered::width * recovered::height * 2U)
+            std::printf("BOTTIE_WIRE bytes=%u first0=%u first1=%u hash=%u\n",
+                        static_cast<unsigned>(diagnostics_.bytes), static_cast<unsigned>(diagnostics_.first0),
+                        static_cast<unsigned>(diagnostics_.first1), static_cast<unsigned>(diagnostics_.hash));
+    }
+    return send(bytes, length);
+}
 bool RecoveredBoard::end_pixels() { return level(recovered::cs, true); }
 bool RecoveredBoard::present(const Frame& frame) {
     if (!initialized_) return false;
-    if (recovered::present(*this, frame)) return true;
+    const bool ok = recovered::present(*this, frame);
+    if (!ok || frame.storage_y + frame.rows() == frame.height) diagnosing_ = false;
+    if (ok) return true;
     initialized_ = false;
     return false;
 }
