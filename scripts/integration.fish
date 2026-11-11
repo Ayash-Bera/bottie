@@ -8,6 +8,8 @@ end
 
 fish --no-config $root/firmware/tools/check-native.fish
 or exit 1
+fish --no-config $root/firmware/network/tools/check-native.fish
+or exit 1
 
 set -l scratch (mktemp -d /tmp/bottie-integration-build.XXXXXX)
 or exit 1

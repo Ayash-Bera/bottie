@@ -42,6 +42,8 @@ set -gx BOTTIE_BIND 0.0.0.0:8787
 
 Run the server from that same session. Set the same token in the eventual device provisioning step; do not place it in command arguments, URLs, screenshots or shell history. All `/v1` requests, including artwork, require `Authorization: Bearer <device token>` when configured. Use a trusted private network; the built-in listener is HTTP, so bearer authentication does not encrypt the transport. Public exposure and device provisioning are outside this milestone. Keep the default loopback bind until the device is configured.
 
+The opt-in [ESP transport](../firmware/network/README.md) accepts an IPv4 literal origin and a separate bearer token containing letters, digits or `-._~+/=`. Choose at least 32 characters to satisfy both ends. Keep `BOTTIE_ARTWORK_SIZE=96` for its bounded artwork cache. Plain HTTP also requires the firmware's explicit LAN opt-in. Private Wi-Fi and device credentials stay in an ignored local configuration file and configured firmware images must remain private. The default firmware has no credentials; compiled networking has not been exercised on hardware.
+
 ## Spotify connection
 
 1. Register an application and the exact redirect URI in the Spotify developer dashboard. Set SPOTIFY_CLIENT_ID and BOTTIE_MODE=spotify in the server environment. No client secret is used.
