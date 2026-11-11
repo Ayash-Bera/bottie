@@ -152,6 +152,9 @@ func TestOAuthRoutes(t *testing.T) {
 	if w.Code != 303 {
 		t.Fatal(w.Code)
 	}
+	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "form-action 'self' https://accounts.spotify.com;") {
+		t.Fatal("authorization redirect is blocked by the form policy")
+	}
 	cookies := w.Result().Cookies()
 	if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteLaxMode || cookies[0].MaxAge != 600 {
 		t.Fatal("unsafe OAuth cookie")
