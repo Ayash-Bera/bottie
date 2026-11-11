@@ -51,20 +51,51 @@ const uint8_t* glyph(char c) {
         {54,73,73,73,54},{6,73,73,41,30}
     };
     static constexpr uint8_t unknown[5] = {2,1,81,9,6}, space[5] = {}, dash[5] = {8,8,8,8,8};
+    static constexpr uint8_t punctuation[][5] = {
+        {0,96,96,0,0}, {0,64,32,0,0}, {0,54,54,0,0}, {0,0,3,0,0}, {0,3,0,3,0},
+        {0,28,34,65,0}, {0,65,34,28,0}, {32,16,8,4,2}, {54,73,85,34,80},
+        {0,0,95,0,0}, {8,8,62,8,8}, {64,64,64,64,64}
+    };
     if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
     if (c >= 'A' && c <= 'Z') return letters[c - 'A'];
     if (c >= '0' && c <= '9') return digits[c - '0'];
     if (c == ' ') return space;
     if (c == '-') return dash;
+    const char* marks = ".,:'\"()/&!+_";
+    for (size_t n = 0; marks[n]; ++n) if (c == marks[n]) return punctuation[n];
     return unknown;
 }
+
+char display_character(const char*& value) {
+    const auto first = static_cast<unsigned char>(*value++);
+    if (first < 128) return static_cast<char>(first);
+    unsigned continuation = first >= 0xf0 ? 3 : first >= 0xe0 ? 2 : 1;
+    uint32_t codepoint = first & (continuation == 3 ? 7 : continuation == 2 ? 15 : 31);
+    for (unsigned n = 0; n < continuation; ++n) {
+        const auto next = static_cast<unsigned char>(*value);
+        if (!next || (next & 0xc0) != 0x80) return '?';
+        codepoint = (codepoint << 6) | (next & 63);
+        ++value;
+    }
+    if (codepoint == 0x2018 || codepoint == 0x2019) return '\'';
+    if (codepoint == 0x201c || codepoint == 0x201d) return '"';
+    if (codepoint >= 0x2010 && codepoint <= 0x2014) return '-';
+    if (codepoint == 0xa0) return ' ';
+    return '?';
+}
+
 void text(Canvas& canvas, int x, int y, const char* value, int right, uint16_t color) {
     int scale = canvas.frame.width >= 200 ? 2 : 1;
     if (y + 7 * scale <= canvas.top() || y >= canvas.bottom()) return;
-    for (size_t i = 0; value[i] && x + 5 * scale <= right; ++i) {
-        unsigned char c = static_cast<unsigned char>(value[i]);
-        if ((c & 0xc0) == 0x80) continue;
-        const uint8_t* columns = glyph(c < 128 ? static_cast<char>(c) : '?');
+    int slots = std::max(0, (right - x + scale) / (6 * scale));
+    const char* scan = value;
+    int length = 0;
+    while (*scan) { display_character(scan); ++length; }
+    bool clipped = length > slots;
+    int visible = clipped ? std::max(0, slots - 3) : length;
+    for (int n = 0; n < std::min(length, slots); ++n) {
+        char c = clipped && n >= visible ? '.' : display_character(value);
+        const uint8_t* columns = glyph(c);
         for (int col = 0; col < 5; ++col)
             for (int row = 0; row < 7; ++row)
                 if (columns[col] & (1 << row)) canvas.rect(x + col * scale, y + row * scale, scale, scale, color);

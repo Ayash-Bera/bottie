@@ -231,6 +231,20 @@ void artwork_render_checks() {
     for (int y = 82; y < 154; ++y)
         for (int x = 10; x < 154; ++x) CHECK(recovered.pixels[y * 240 + x] == 0xf800);
     CHECK(recovered.pixels[118 * 240 + 239] == 0x0843);
+
+    std::strcpy(model.snapshot.title, "A'B-\"LIVE\" (2026)");
+    CHECK(render(model, 0, recovered, &art));
+    first = frame_hash(recovered);
+    const auto punctuation_hash = first;
+    std::strcpy(model.snapshot.title, "A\xe2\x80\x99" "B\xe2\x80\x93\xe2\x80\x9c" "LIVE\xe2\x80\x9d (2026)");
+    CHECK(render(model, 0, recovered, &art) && frame_hash(recovered) == first);
+    std::strcpy(model.snapshot.title, "ABCDEFGHIJKLMNO...");
+    CHECK(render(model, 0, recovered, &art));
+    first = frame_hash(recovered);
+    std::strcpy(model.snapshot.title, "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    CHECK(render(model, 0, recovered, &art) && frame_hash(recovered) == first);
+    std::strcpy(model.snapshot.title, "A?B-?LIVE? ?2026?");
+    CHECK(render(model, 0, recovered, &art) && frame_hash(recovered) != punctuation_hash);
 }
 } // namespace
 
