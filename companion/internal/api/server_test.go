@@ -130,9 +130,10 @@ func TestAuthenticationOriginAndLogs(t *testing.T) {
 	}
 }
 
-type fakeOAuth struct{ calls int }
+type fakeOAuth struct{ calls, begins int }
 
 func (f *fakeOAuth) Begin(context.Context) (string, string, *models.ServiceError) {
+	f.begins++
 	return "https://accounts.spotify.com/authorize?state=test-state", "test-state", nil
 }
 func (f *fakeOAuth) Complete(ctx context.Context, state, cookie, code, providerError string) *models.ServiceError {
@@ -142,6 +143,59 @@ func (f *fakeOAuth) Complete(ctx context.Context, state, cookie, code, providerE
 	}
 	return nil
 }
+
+func TestOAuthFormOrigins(t *testing.T) {
+	cfg, _ := config.Parse(func(string) string { return "" })
+	store := artwork.New(96, nil)
+	p, _ := fixture.New(store, nil)
+	oauth := &fakeOAuth{}
+	h := New(cfg, p, store, oauth, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	home := request(h, "GET", "/", "", "", "")
+	if home.Code != http.StatusOK || home.Header().Get("Referrer-Policy") != "same-origin" {
+		t.Fatal("home policy must preserve the origin of its browser form POST")
+	}
+	if !strings.Contains(home.Body.String(), "<form method=post action=/auth/login>") {
+		t.Fatal("local login form missing")
+	}
+	for _, tt := range []struct {
+		name, origin, site string
+		status             int
+	}{
+		{"local", "http://127.0.0.1:8787", "same-origin", http.StatusSeeOther},
+		{"foreign", "https://foreign.invalid", "cross-site", http.StatusForbidden},
+		{"foreign_spoofed_metadata", "https://foreign.invalid", "same-origin", http.StatusForbidden},
+		{"null_spoofed_metadata", "null", "same-origin", http.StatusForbidden},
+		{"local_cross_site_metadata", "http://127.0.0.1:8787", "cross-site", http.StatusForbidden},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before := oauth.begins
+			r := httptest.NewRequest("POST", "http://127.0.0.1:8787/auth/login", nil)
+			r.RemoteAddr = "127.0.0.1:40000"
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.Header.Set("Origin", tt.origin)
+			r.Header.Set("Sec-Fetch-Site", tt.site)
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "document")
+			r.Header.Set("Sec-Fetch-User", "?1")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tt.status {
+				t.Fatalf("status: got %d, want %d", w.Code, tt.status)
+			}
+			if w.Header().Get("Referrer-Policy") != "no-referrer" {
+				t.Fatal("login response must retain no-referrer")
+			}
+			if tt.status == http.StatusSeeOther {
+				if oauth.begins != before+1 || w.Header().Get("Location") == "" {
+					t.Fatal("local form did not begin authorization")
+				}
+			} else if oauth.begins != before || w.Header().Get("Location") != "" || len(w.Result().Cookies()) != 0 {
+				t.Fatal("rejected origin started authorization")
+			}
+		})
+	}
+}
+
 func TestOAuthRoutes(t *testing.T) {
 	cfg, _ := config.Parse(func(string) string { return "" })
 	store := artwork.New(96, nil)
@@ -163,6 +217,9 @@ func TestOAuthRoutes(t *testing.T) {
 	if w.Code != 400 || oauth.calls != 0 {
 		t.Fatal("callback without cookie")
 	}
+	if w.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatal("callback error must retain no-referrer")
+	}
 	r := httptest.NewRequest("GET", "http://127.0.0.1:8787/auth/callback?state=test-state&code=test-code", nil)
 	r.RemoteAddr = "127.0.0.1:40000"
 	r.Header.Set("Sec-Fetch-Site", "cross-site")
@@ -171,6 +228,9 @@ func TestOAuthRoutes(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 303 || oauth.calls != 1 || w.Header().Get("Location") != "/status" {
 		t.Fatal("callback routing")
+	}
+	if w.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatal("callback redirect must retain no-referrer")
 	}
 }
 

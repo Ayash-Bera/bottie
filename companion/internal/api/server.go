@@ -267,6 +267,7 @@ func (s *server) artwork(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 func (s *server) home(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = io.WriteString(w, "<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width'><title>Bottie companion</title><h1>Bottie companion</h1><p><a href=/status>Connection status</a></p>")
 	if s.oauth == nil {
