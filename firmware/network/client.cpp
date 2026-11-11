@@ -111,15 +111,34 @@ struct Client::Impl {
     esp_event_handler_instance_t wifi_handler{}, ip_handler{};
     bool loop_owned{}, wifi_owned{}, wifi_started{}, handlers_attached{}, attempting{};
     std::atomic<bool> connected{false}, link_failed{false};
+    std::atomic<uint32_t> associated_at{0};
+    unsigned starts{}, associations{}, disconnects{}, addresses{}, attempts{}, timeouts{};
     uint64_t attempt_until{};
     policy::Backoff wifi_backoff, http_backoff, art_backoff;
     uint8_t art_bytes[artwork_capacity]{};
     char art_url[257]{};
     Artwork art;
 
-    static void event(void* context, esp_event_base_t base, int32_t id, void*) {
+    static void event(void* context, esp_event_base_t base, int32_t id, void* data) {
         auto& self = *static_cast<Impl*>(context);
-        if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) self.connected.store(true);
+        if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START)
+            std::printf("BOTTIE_WIFI_START count=%u\n", ++self.starts);
+        if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED && data) {
+            const auto& event = *static_cast<wifi_event_sta_connected_t*>(data);
+            self.associated_at.store(static_cast<uint32_t>(clock_ms()));
+            std::printf("BOTTIE_WIFI_ASSOC count=%u channel=%u auth=%u\n", ++self.associations,
+                        static_cast<unsigned>(event.channel), static_cast<unsigned>(event.authmode));
+        }
+        if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED && data) {
+            const auto& event = *static_cast<wifi_event_sta_disconnected_t*>(data);
+            self.associated_at.store(0);
+            std::printf("BOTTIE_WIFI_DISCONNECT count=%u reason=%u rssi=%d\n", ++self.disconnects,
+                        static_cast<unsigned>(event.reason), static_cast<int>(event.rssi));
+        }
+        if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+            self.connected.store(true);
+            std::printf("BOTTIE_IP count=%u\n", ++self.addresses);
+        }
         else if ((base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) ||
                  (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP)) {
             self.connected.store(false);
@@ -132,7 +151,14 @@ struct Client::Impl {
         if (connected.load()) { attempting = false; wifi_backoff.clear(); return true; }
         if (attempting) {
             if (!link_failed.load() && now < attempt_until) return false;
-            esp_wifi_disconnect();
+            const bool timed_out = !link_failed.load() && now >= attempt_until;
+            if (timed_out) ++timeouts;
+            const uint32_t since = associated_at.load();
+            const esp_err_t result = esp_wifi_disconnect();
+            std::printf("BOTTIE_WIFI_END timeout=%u timeouts=%u associated_ms=%u result=%d\n",
+                        static_cast<unsigned>(timed_out), timeouts,
+                        static_cast<unsigned>(since ? static_cast<uint32_t>(now) - since : 0),
+                        static_cast<int>(result));
             attempting = false;
             wifi_backoff.fail(now);
         }
@@ -140,7 +166,9 @@ struct Client::Impl {
             link_failed.store(false);
             attempting = true;
             attempt_until = now + 15000;
-            if (esp_wifi_connect() != ESP_OK) link_failed.store(true);
+            const esp_err_t result = esp_wifi_connect();
+            std::printf("BOTTIE_WIFI_CONNECT count=%u result=%d\n", ++attempts, static_cast<int>(result));
+            if (result != ESP_OK) link_failed.store(true);
         }
         return false;
     }
@@ -195,7 +223,7 @@ bool Client::start(const Config& config) {
     if (!impl_->netif || esp_netif_attach_wifi_station(impl_->netif) != ESP_OK) return failed();
     impl_->handlers_attached = true;
     if (esp_wifi_set_default_wifi_sta_handlers() != ESP_OK) return failed();
-    if (esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, Impl::event, impl_, &impl_->wifi_handler) != ESP_OK ||
+    if (esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, Impl::event, impl_, &impl_->wifi_handler) != ESP_OK ||
         esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, Impl::event, impl_, &impl_->ip_handler) != ESP_OK) return failed();
     wifi_config_t station{};
     std::memcpy(station.sta.ssid, impl_->ssid, std::strlen(impl_->ssid));
@@ -214,7 +242,7 @@ bool Client::start(const Config& config) {
 void Client::stop() {
     cancelled_.store(true);
     if (impl_) {
-        if (impl_->wifi_handler) esp_event_handler_instance_unregister(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, impl_->wifi_handler);
+        if (impl_->wifi_handler) esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, impl_->wifi_handler);
         if (impl_->ip_handler) esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID, impl_->ip_handler);
         if (impl_->wifi_started) esp_wifi_stop();
         if (impl_->handlers_attached) esp_wifi_clear_default_wifi_driver_and_handlers(impl_->netif);

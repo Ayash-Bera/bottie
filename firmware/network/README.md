@@ -43,6 +43,8 @@ The device token must be a separate 16..256-byte bearer token using letters, dig
 
 The component exclusively owns Wi-Fi station setup and refuses an already initialized Wi-Fi driver/default station interface. Integrate shared Wi-Fi ownership explicitly before combining it with another station manager. Configuration strings are copied except the certificate, which must outlive the client.
 
+Numeric commissioning logs distinguish station start, association, address acquisition, driver disconnect reasons, connect return codes and client timeouts. They include event counts, channel, authentication mode and disconnect RSSI, without network names, hardware addresses or credentials. A client timeout is logged before its disconnect call so it can be distinguished from a preceding driver failure.
+
 ## Bounds and failures
 
 Each connection, headers and body share a 6-second monotonic deadline. ESP-TLS uses nonblocking sockets and 20 ms connection polling. Cancellation does not close a socket from another task. A playback call may fetch metadata then artwork, so its overall I/O budget is up to 12 seconds plus bounded parsing/cleanup and scheduling. No redirects, auth retries, compression, or automatic POST retries are supported.
