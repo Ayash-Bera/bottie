@@ -29,7 +29,7 @@ The config package reads the environment once at startup, with optional `.env` l
 | SPOTIFY_CLIENT_ID | unset | Required only in spotify mode; 32 hexadecimal characters from app registration |
 | SPOTIFY_REDIRECT_URI | http://127.0.0.1:8787/auth/callback | HTTP loopback literal, callback path and bound port must match |
 
-The redirect default follows a changed bind port. `localhost` is deliberately rejected. A Spotify listener must accept the configured loopback callback. For IPv6 use `[::1]` consistently; for LAN plus local OAuth use a wildcard bind and device authentication. Admin/status/OAuth routes require a loopback peer and loopback Host. Forwarded headers are not trusted. No reverse-proxy deployment is included in this milestone.
+The redirect default follows a changed bind port. `localhost` is deliberately rejected. A Spotify listener must accept the configured loopback callback. For IPv6 use `[::1]` consistently. Admin/status/OAuth routes require a loopback peer and loopback Host. Forwarded headers are not trusted. To preserve an existing loopback Spotify session when connecting a device, use the narrow device gateway described below.
 
 To set a device secret without printing it, start an interactive fish session and paste a random value of at least 32 characters from a password manager into the hidden prompt:
 
@@ -44,13 +44,57 @@ Run the server from that same session. Set the same token in the eventual device
 
 The opt-in [ESP transport](../firmware/network/README.md) accepts an IPv4 literal origin and a separate bearer token containing letters, digits or `-._~+/=`. Choose at least 32 characters to satisfy both ends. Keep `BOTTIE_ARTWORK_SIZE=96` for its bounded artwork cache. Plain HTTP also requires the firmware's explicit LAN opt-in. Private Wi-Fi and device credentials stay in an ignored local configuration file and configured firmware images must remain private. The default firmware has no credentials; compiled networking has not been exercised on hardware.
 
+## Device gateway preserving a signed-in companion
+
+`cmd/device-bridge` is a separate, bounded HTTP adapter to the fixed upstream `http://127.0.0.1:8787`. It preserves the companion process and its in-memory Spotify session. It has no Spotify configuration or account tokens, reads no `.env`, and forwards no caller cookies, bearer, origin or forwarded headers. The existing companion must remain on loopback, with its device-token setting unset; this adapter authenticates the device before forwarding. Restarting the gateway does not restart the companion.
+
+| Variable | Default | Constraints |
+| --- | --- | --- |
+| BOTTIE_BRIDGE_BIND | 127.0.0.1:8788 | Specific private or loopback IPv4 literal and port; no wildcard, public IP or port 8787 |
+| BOTTIE_BRIDGE_TOKEN_FILE | required | Absolute path to a regular 0600 file, no symlink; 32..256 letters, digits or `-._~+/=`, optional final newline |
+
+Every route requires the separate device bearer. Only these method/path pairs are forwarded:
+
+- `GET /v1/playback`
+- `POST /v1/control`
+- `GET /v1/artwork/<id>`, with 1..128 letters, digits, underscores or hyphens
+
+The gateway exposes no home, status, login or callback route. It rejects query strings, encoded paths, arbitrary origins and all browser Origin/Fetch-Metadata requests, including `Origin: null` with spoofed same-origin metadata. Host must match the configured numeric address and port. There is no CORS allowance. Caller headers cannot select another upstream. Redirects are rejected and control requests are never replayed by the gateway, including after ambiguous connection failure. The companion's existing Spotify refresh policy remains unchanged.
+
+Requests have an 8-second upstream deadline and eight concurrent slots. Control bodies are capped at 1024 bytes, playback/control JSON at 8192 bytes and artwork at 18,448 bytes. Playback is decoded into protocol fields, so unknown response fields cannot leak through. BTAR headers, stride, payload length and dimensions up to 96 x 96 are checked before delivery. Keep the companion's artwork size at 96. Retry-After delta seconds are capped at 300. Only selected status headers are returned; cookies, redirect locations and raw upstream error bodies are discarded. Header/read/write/idle limits match the companion.
+
+Prepare a separate device token in a private temporary directory without printing its value:
+
+```fish
+set -l bridge_private (mktemp -d /tmp/bottie-device-bridge-XXXXXXXX)
+chmod 700 $bridge_private
+python3 -c 'import os,secrets,sys; fd=os.open(sys.argv[1],os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600); os.write(fd,secrets.token_urlsafe(48).encode()); os.close(fd)' $bridge_private/device-token
+```
+
+From `companion/`, build once, then start a loopback-only instance when desired:
+
+```fish
+go build -o /tmp/bottie-device-bridge ./cmd/device-bridge
+env BOTTIE_BRIDGE_TOKEN_FILE=$bridge_private/device-token /tmp/bottie-device-bridge
+```
+
+For commissioning on the observed host, the proposed destination is **`http://192.168.1.148:8788`**, on wired interface `enp5s0`. This is a proposed activation, not a listener started by preparation. The other observed address, `192.168.1.211` on `wlan0`, is not selected. Recheck the chosen address before activation because DHCP can change it. After explicit LAN authorization, the activation command is:
+
+```fish
+env BOTTIE_BRIDGE_BIND=192.168.1.148:8788 BOTTIE_BRIDGE_TOKEN_FILE=$bridge_private/device-token /tmp/bottie-device-bridge
+```
+
+Provision the same device token and exact origin into the firmware's private configuration only after that handoff is authorized. Wi-Fi credentials must be supplied for provisioning; this setup does not read saved host Wi-Fi passwords. No firewall changes are part of the proposal. HTTP does not encrypt metadata, artwork, control commands or the device bearer, so this option requires a trusted private LAN. Router isolation and actual device reachability remain unverified. A USB alternative would require a new firmware/host transport and serial ownership arrangement; the completed device client uses HTTP.
+
+Stopping only the gateway removes this listener while the companion and Spotify session continue running. Temporary token/configuration files disappear when removed or when the temporary directory is cleared. Loss of that separate token requires reprovisioning the device. Never include its value in command arguments, reports, screenshots, URLs or committed files.
+
 ## Spotify connection
 
 1. Register an application and the exact redirect URI in the Spotify developer dashboard. Set SPOTIFY_CLIENT_ID and BOTTIE_MODE=spotify in the server environment. No client secret is used.
 2. Start Spotify playback on the intended device. Open the companion loopback page on the same computer and select Connect Spotify. Complete consent in that browser within ten minutes.
 3. Check `/status`. A restart clears tokens, so connect again after restarting. The service requests only playback read and modify permissions.
 
-Account access, app eligibility and player controls depend on Spotify's current account/app rules. Player control endpoints require Premium. This implementation has been tested against local fake upstreams, not a real account or Alexa. See the [player reference](https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback) and [development mode changes](https://developer.spotify.com/documentation/web-api/references/changes/february-2026).
+Account access, app eligibility and player controls depend on Spotify's current account/app rules. Player control endpoints require Premium. Automated tests use fake upstreams. User-completed login and read-only live playback metadata and 96 x 96 artwork were verified on 2026-11-12; live controls and Alexa behavior remain unverified. See the [player reference](https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback) and [development mode changes](https://developer.spotify.com/documentation/web-api/references/changes/february-2026).
 
 OAuth uses a random state and S256 PKCE verifier, a browser-bound HttpOnly SameSite=Lax cookie, ten-minute expiry and one-use state consumption before code exchange. Authorization data is never included in playback JSON or logs. The loopback HTTP cookie intentionally has no Secure flag. Redirects from token/API/artwork upstreams are refused. Refresh preserves a previous refresh token if Spotify omits a replacement and clears invalid grants so the user can reconnect. See [PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow), [refresh](https://developer.spotify.com/documentation/web-api/tutorials/refreshing-tokens), and [redirect requirements](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
 
