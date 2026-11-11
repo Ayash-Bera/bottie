@@ -84,7 +84,11 @@ func (h harness) nativeState(b []byte, state string, art bool, args ...string) e
 		Progress int64  `json:"progress_ms"`
 		Artwork  bool   `json:"artwork"`
 	}
-	if json.Unmarshal(out, &got) != nil || got.State != state || got.Artwork != art || got.Progress < 0 {
+	var source models.Playback
+	if json.Unmarshal(b, &source) != nil {
+		return errors.New("invalid source snapshot")
+	}
+	if json.Unmarshal(out, &got) != nil || got.State != state || got.Artwork != art || got.Progress < 0 || got.Progress > source.DurationMS {
 		return fmt.Errorf("native state mismatch: %s", out)
 	}
 	return nil
@@ -125,6 +129,9 @@ func (h harness) check() error {
 		return err
 	}
 	if err = h.nativeState(b, p.State, true, "--art", artPath, "--wall-ms", strconv.FormatInt(p.UpdatedAtMS, 10)); err != nil {
+		return err
+	}
+	if err = h.nativeState(b, p.State, true, "--profile", "recovered", "--art", artPath, "--wall-ms", strconv.FormatInt(p.UpdatedAtMS, 10)); err != nil {
 		return err
 	}
 	for _, step := range []struct{ button, action, state, id string }{
@@ -185,6 +192,9 @@ func (h harness) check() error {
 			state = "unavailable"
 		}
 		if err = h.nativeState(data, state, false, "--wall-ms", "1700000000000"); err != nil {
+			return err
+		}
+		if err = h.nativeState(data, state, false, "--profile", "recovered", "--wall-ms", "1700000000000"); err != nil {
 			return err
 		}
 	}
