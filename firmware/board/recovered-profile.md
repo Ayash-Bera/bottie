@@ -17,7 +17,7 @@ The exact captured image has SHA-256 `2a561070a48413278834d25d2dcececb82d417924f
 
 The table in `recovered_profile.hpp` includes the three initial DCS commands and all 26 subsequent traced calls, retaining their exact parameters and delays. Its native test uses an independently computed fingerprint of the captured command stream. The published [JD9853 driver](https://github.com/mydazy/esp_lcd_jd9853/blob/main/esp_lcd_jd9853.c) supports the family identification; it does not identify this board or validate the physical panel.
 
-The installed app drives GPIO13 high after setup and GPIO2 low. Their roles are not established. The adapter leaves both untouched. It has no touch or backlight driver, performs no controller readback and enables no PSRAM. No unknown-pin probing is implemented.
+The adapter reproduces two additional levels from the active startup trace: GPIO2 low at `0x4200208a`, GPIO13 low at `0x42002098`, then GPIO13 high at `0x420022d5` after panel initialization. Both pins are configured as outputs by the preceding calls. GPIO13 stays low if initialization fails. Their physical roles remain unverified; GPIO13 may gate display visibility, but no backlight function is assumed. The adapter has no touch input, performs no controller readback and enables no PSRAM. No separate pin probing is implemented.
 
 ## Compile and inspect
 

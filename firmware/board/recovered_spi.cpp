@@ -26,11 +26,13 @@ RecoveredBoard::~RecoveredBoard() {
 bool RecoveredBoard::initialize() {
     if (configured_ || bus_ready_) return false;
     gpio_config_t gpio{};
-    gpio.pin_bit_mask = (1ULL << recovered::cs) | (1ULL << recovered::dc) | (1ULL << recovered::reset);
+    gpio.pin_bit_mask = (1ULL << recovered::cs) | (1ULL << recovered::dc) | (1ULL << recovered::reset) |
+                        (1ULL << recovered::startup_low_pin) | (1ULL << recovered::post_init_high_pin);
     gpio.mode = GPIO_MODE_OUTPUT;
     if (!checked(gpio_config(&gpio))) return false;
     configured_ = true;
-    if (!level(recovered::cs, true) || !level(recovered::dc, true) || !level(recovered::reset, true)) return false;
+    if (!level(recovered::startup_low_pin, false) || !level(recovered::post_init_high_pin, false) ||
+        !level(recovered::cs, true) || !level(recovered::dc, true) || !level(recovered::reset, true)) return false;
     spi_bus_config_t bus{};
     bus.mosi_io_num = recovered::mosi;
     bus.miso_io_num = -1;
@@ -46,7 +48,7 @@ bool RecoveredBoard::initialize() {
     device.spics_io_num = -1;
     device.queue_size = 1;
     if (!checked(spi_bus_add_device(SPI2_HOST, &device, &device_))) return false;
-    initialized_ = recovered::initialize(*this);
+    initialized_ = recovered::initialize(*this) && level(recovered::post_init_high_pin, true);
     if (!initialized_) level(recovered::cs, true);
     return initialized_;
 }

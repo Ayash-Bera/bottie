@@ -5,6 +5,7 @@
 namespace bottie::recovered {
 constexpr uint16_t width = 240, height = 296;
 constexpr int sck = 9, mosi = 10, cs = 14, dc = 8, reset = 17;
+constexpr int startup_low_pin = 2, post_init_high_pin = 13;
 constexpr int clock_hz = 40000000;
 struct Command {
     uint8_t code, length;
