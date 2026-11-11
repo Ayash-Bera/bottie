@@ -101,3 +101,24 @@ func TestElapsedAcrossTracks(t *testing.T) {
 		})
 	}
 }
+
+func TestShuffleTraversal(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	p, _ := New(artwork.New(96, nil), func() time.Time { return now })
+	_ = p.Control(context.Background(), models.Control{Action: "shuffle", Value: json.RawMessage("true")})
+	for _, tt := range []struct{ action, id string }{{"next", "fixture-signal"}, {"previous", "fixture-orbit"}, {"next", "fixture-signal"}, {"next", "fixture-tide"}} {
+		if e := p.Control(context.Background(), models.Control{Action: tt.action}); e != nil {
+			t.Fatal(e)
+		}
+		s, _ := p.Snapshot()
+		if s.TrackID != tt.id {
+			t.Fatalf("shuffle %s: %s", tt.action, s.TrackID)
+		}
+	}
+	_ = p.Control(context.Background(), models.Control{Action: "play"})
+	now = now.Add(time.Hour)
+	s, _ := p.Snapshot()
+	if s.State != "paused" || s.TrackID != "fixture-tide" || s.ProgressMS != s.DurationMS {
+		t.Fatal("shuffled end did not stop")
+	}
+}

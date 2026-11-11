@@ -58,7 +58,7 @@ Rate limits honor `Retry-After` seconds or HTTP dates. Missing/invalid retry val
 
 ## Limits and status
 
-The server has 3-second header, 10-second request-read, 15-second response-write and 30-second idle timeouts, 16 KiB headers and 32 concurrent device requests. Control bodies are at most 1024 bytes. API upstream responses are at most 256 KiB with an 8-second HTTP timeout. Artwork permits 4 MiB encoded downloads, at most 4096 pixels per dimension and 4,194,304 source pixels; the converted cache contains at most eight images and 2 MiB. Only `https://i.scdn.co/image/...` supplied by a playback response can be fetched. A failed image fetch is deferred for a minute. No general URL-fetch endpoint exists.
+The server has 3-second header, 10-second request-read, 15-second response-write and 30-second idle timeouts, 16 KiB headers and 32 concurrent application requests. Control bodies are at most 1024 bytes. API upstream responses are at most 256 KiB with an 8-second HTTP timeout. Artwork permits 4 MiB encoded downloads, at most 4096 pixels per dimension and 4,194,304 source pixels; the converted cache contains at most eight images and 2 MiB. Only `https://i.scdn.co/image/...` supplied by a playback response can be fetched. A failed image fetch is deferred for a minute. No general URL-fetch endpoint exists.
 
 Artwork is fitted proportionally, without cropping or overlays, with black padding where necessary. The exact RGB565 transport and JSON limits are in [protocol v1](../protocol/README.md).
 

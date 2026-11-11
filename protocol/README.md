@@ -23,7 +23,7 @@ The fixture starts paused on track `fixture-orbit`, at zero progress. Explicit c
 | shuffle | boolean, required |
 | repeat | off, context or track string, required |
 
-Success is HTTP 200 with `{"ok":true}`. It means the command was accepted, not that the downstream player has already changed. Fetch playback again. Errors are `{"error":{"code":"invalid_control","message":"..."}}`, bounded to 1024 bytes. Codes/statuses: invalid_json or invalid_control (400), unauthorized (401), forbidden (403), unsupported (409), too_large (413), content_type (415), rate_limited (429), upstream_error (502), not_authorized or no_device (503). Rate limits include Retry-After. Never retry next/previous automatically after ambiguous transport failure.
+Success is HTTP 200 with `{"ok":true}`. It means the command was accepted, not that the downstream player has already changed. Fetch playback again. Errors are `{"error":{"code":"invalid_control","message":"..."}}`, bounded to 1024 bytes. Codes/statuses: invalid_json or invalid_control (400), unauthorized (401), forbidden or restricted (403), unsupported (409), too_large (413), content_type (415), rate_limited (429), internal_error (500), upstream_error (502), not_authorized or no_device (503). Rate limits include Retry-After. Never retry next/previous automatically after ambiguous transport failure.
 
 Use `Authorization: Bearer <device token>` on both endpoints and artwork when configured. The token is local device authentication, never a Spotify token. No query-string token is supported.
 
@@ -45,4 +45,4 @@ The binary format has a **16-byte header**, then row-major RGB565 little-endian 
 
 Pixel bits are RRRRRGGG GGGBBBBB. No trailing bytes. Validate header, safe dimensions, stride, multiplication and complete payload before rendering. Maximum total transport size is 115216 bytes. Firmware may impose a smaller configured bound and decline larger images safely. Fetch artwork again if a cache URL returns 404. HTTP errors are JSON, never BTAR.
 
-`fixtures/orbit-96.btar` is deterministic original artwork. JSON examples include full, missing optional metadata, stale, idle and unavailable states. The negative fixture is deliberately invalid and must be rejected. No hardware dimensions or pins are implied by these fixtures.
+`fixtures/orbit-96.btar` is deterministic original artwork. JSON examples include full, missing optional metadata, stale, idle, unavailable and maximum metadata states. `invalid.json` and `oversized-metadata.json` are deliberately invalid and must be rejected. No hardware dimensions or pins are implied by these fixtures.

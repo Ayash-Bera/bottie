@@ -73,6 +73,31 @@ func (h harness) nativeRun(b []byte, args ...string) ([]byte, error) {
 	}
 	return out, nil
 }
+
+func (h harness) nativeState(b []byte, state string, art bool, args ...string) error {
+	out, err := h.nativeRun(b, args...)
+	if err != nil {
+		return err
+	}
+	var got struct {
+		State    string `json:"state"`
+		Progress int64  `json:"progress_ms"`
+		Artwork  bool   `json:"artwork"`
+	}
+	if json.Unmarshal(out, &got) != nil || got.State != state || got.Artwork != art || got.Progress < 0 {
+		return fmt.Errorf("native state mismatch: %s", out)
+	}
+	return nil
+}
+
+func (h harness) nativeReject(b []byte, code int, args ...string) error {
+	_, err := h.nativeRun(b, args...)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != code {
+		return fmt.Errorf("expected native rejection %d: %v", code, err)
+	}
+	return nil
+}
 func (h harness) check() error {
 	p, b, err := h.snapshot()
 	if err != nil {
@@ -81,7 +106,7 @@ func (h harness) check() error {
 	if p.State != "paused" || p.TrackID != "fixture-orbit" {
 		return errors.New("fixture initial state differs")
 	}
-	if _, err = h.nativeRun(b, "--wall-ms", strconv.FormatInt(p.UpdatedAtMS, 10)); err != nil {
+	if err = h.nativeState(b, p.State, false, "--wall-ms", strconv.FormatInt(p.UpdatedAtMS, 10)); err != nil {
 		return err
 	}
 	art, status, err := h.request("GET", p.Artwork.URL, nil)
@@ -99,7 +124,7 @@ func (h harness) check() error {
 	if err = os.WriteFile(artPath, art, 0600); err != nil {
 		return err
 	}
-	if _, err = h.nativeRun(b, "--art", artPath, "--wall-ms", strconv.FormatInt(p.UpdatedAtMS, 10)); err != nil {
+	if err = h.nativeState(b, p.State, true, "--art", artPath, "--wall-ms", strconv.FormatInt(p.UpdatedAtMS, 10)); err != nil {
 		return err
 	}
 	for _, step := range []struct{ button, action, state, id string }{
@@ -143,43 +168,57 @@ func (h harness) check() error {
 		if p.TrackID == "fixture-signal" && (p.Artwork.URL != "" || p.Context.Type != "unknown") {
 			return errors.New("missing metadata fallback")
 		}
-		if _, err = h.nativeRun(b, "--wall-ms", strconv.FormatInt(p.UpdatedAtMS, 10)); err != nil {
+		if err = h.nativeState(b, p.State, false, "--wall-ms", strconv.FormatInt(p.UpdatedAtMS, 10)); err != nil {
 			return err
 		}
 	}
-	for _, name := range []string{"playing", "paused", "idle", "unavailable", "missing", "stale"} {
+	for _, name := range []string{"playing", "paused", "idle", "unavailable", "missing", "stale", "bounded"} {
 		data, err := os.ReadFile(filepath.Join(h.fixtures, name+".json"))
 		if err != nil {
 			return err
 		}
-		if _, err = h.nativeRun(data, "--wall-ms", "1700000000000"); err != nil {
+		state := name
+		if name == "missing" || name == "bounded" {
+			state = "playing"
+		}
+		if name == "stale" {
+			state = "unavailable"
+		}
+		if err = h.nativeState(data, state, false, "--wall-ms", "1700000000000"); err != nil {
 			return err
 		}
 	}
 	for _, args := range [][]string{{"--offline"}, {"--elapsed-ms", "16000"}, {"--wall-ms", strconv.FormatInt(p.UpdatedAtMS+16000, 10)}} {
-		if _, err = h.nativeRun(b, args...); err != nil {
+		if err = h.nativeState(b, "unavailable", false, args...); err != nil {
 			return err
 		}
-		if _, err = h.nativeRun(b, append(args, "--control", "next")...); err == nil {
-			return errors.New("offline or stale control accepted")
+		if err = h.nativeReject(b, 3, append(args, "--control", "next")...); err != nil {
+			return err
 		}
 	}
 	invalid, err := os.ReadFile(filepath.Join(h.fixtures, "invalid.json"))
 	if err != nil {
 		return err
 	}
-	if _, err = h.nativeRun(invalid); err == nil {
-		return errors.New("invalid snapshot accepted")
+	if err = h.nativeReject(invalid, 1); err != nil {
+		return err
 	}
-	if _, err = h.nativeRun(bytes.Repeat([]byte("x"), 8193)); err == nil {
-		return errors.New("oversized snapshot accepted")
+	oversized, err := os.ReadFile(filepath.Join(h.fixtures, "oversized-metadata.json"))
+	if err != nil {
+		return err
+	}
+	if err = h.nativeReject(oversized, 1); err != nil {
+		return err
+	}
+	if err = h.nativeReject(bytes.Repeat([]byte("x"), 8193), 1); err != nil {
+		return err
 	}
 	badArt := filepath.Join(h.scratch, "truncated.btar")
 	if err = os.WriteFile(badArt, art[:len(art)-1], 0600); err != nil {
 		return err
 	}
-	if _, err = h.nativeRun(b, "--art", badArt); err == nil {
-		return errors.New("truncated artwork accepted")
+	if err = h.nativeReject(b, 1, "--art", badArt); err != nil {
+		return err
 	}
 	_, status, err = h.request("POST", "/v1/control", []byte(`{"action":"shuffle","value":"true"}`))
 	if err != nil || status != 400 {

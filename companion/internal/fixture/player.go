@@ -67,7 +67,11 @@ func (p *Player) tick() {
 			}
 			for elapsed >= p.state.DurationMS-p.state.ProgressMS {
 				elapsed -= p.state.DurationMS - p.state.ProgressMS
-				if p.state.Repeat != "context" && p.index == len(p.tracks)-1 {
+				last := len(p.tracks) - 1
+				if p.state.Shuffle {
+					last = 1
+				}
+				if p.state.Repeat != "context" && p.index == last {
 					p.state.State = "paused"
 					p.state.ProgressMS = p.state.DurationMS
 					elapsed = 0
@@ -112,7 +116,11 @@ func (p *Player) Control(ctx context.Context, c models.Control) *models.ServiceE
 	case "pause":
 		p.state.State = "paused"
 	case "previous":
-		p.selectTrack(p.index - 1)
+		step := 1
+		if p.state.Shuffle {
+			step = 2
+		}
+		p.selectTrack(p.index - step)
 	case "next":
 		step := 1
 		if p.state.Shuffle {
