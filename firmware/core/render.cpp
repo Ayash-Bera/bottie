@@ -18,17 +18,19 @@ uint32_t noise(uint32_t value) {
 }
 struct Canvas {
     Frame frame;
+    int top() const { return frame.storage_y; }
+    int bottom() const { return frame.storage_y + frame.rows(); }
     void pixel(int x, int y, uint16_t color) {
-        if (x >= 0 && y >= 0 && x < frame.width && y < frame.height)
-            frame.pixels[static_cast<size_t>(y) * frame.stride + static_cast<size_t>(x)] = color;
+        if (x >= 0 && y >= top() && x < frame.width && y < bottom())
+            frame.pixels[static_cast<size_t>(y - top()) * frame.stride + static_cast<size_t>(x)] = color;
     }
     void rect(int x, int y, int width, int height, uint16_t color) {
-        for (int py = std::max(y, 0); py < std::min(y + height, int(frame.height)); ++py)
+        for (int py = std::max(y, top()); py < std::min(y + height, bottom()); ++py)
             for (int px = std::max(x, 0); px < std::min(x + width, int(frame.width)); ++px) pixel(px, py, color);
     }
     void circle(int cx, int cy, int radius, uint16_t color) {
-        for (int y = -radius; y <= radius; ++y)
-            for (int x = -radius; x <= radius; ++x)
+        for (int y = std::max(-radius, top() - cy); y <= std::min(radius, bottom() - cy - 1); ++y)
+            for (int x = std::max(-radius, -cx); x <= std::min(radius, int(frame.width) - cx - 1); ++x)
                 if (x*x + y*y <= radius*radius) pixel(cx + x, cy + y, color);
     }
 };
@@ -58,6 +60,7 @@ const uint8_t* glyph(char c) {
 }
 void text(Canvas& canvas, int x, int y, const char* value, int right, uint16_t color) {
     int scale = canvas.frame.width >= 200 ? 2 : 1;
+    if (y + 7 * scale <= canvas.top() || y >= canvas.bottom()) return;
     for (size_t i = 0; value[i] && x + 5 * scale <= right; ++i) {
         unsigned char c = static_cast<unsigned char>(value[i]);
         if ((c & 0xc0) == 0x80) continue;
@@ -74,7 +77,7 @@ void planet(Canvas& canvas, const Model& model, uint64_t now) {
     int cx = canvas.frame.width / 2, cy = (canvas.frame.height - 20) / 2;
     uint32_t family = model.planet_seed % 5;
     unsigned rotation = static_cast<unsigned>((now / 180) % 128);
-    for (int y = -radius; y <= radius; ++y) {
+    for (int y = std::max(-radius, canvas.top() - cy); y <= std::min(radius, canvas.bottom() - cy - 1); ++y) {
         for (int x = -radius; x <= radius; ++x) {
             int distance = x*x + y*y;
             if (distance > radius*radius) continue;
@@ -128,7 +131,7 @@ void cover(Canvas& canvas, int x, int y, int side, const Artwork* art) {
     if (art->width > art->height) height = std::max(1, side * art->height / art->width);
     else width = std::max(1, side * art->width / art->height);
     int left = x + (side - width)/2, top = y + (side - height)/2;
-    for (int py = 0; py < height; ++py) {
+    for (int py = std::max(0, canvas.top() - top); py < std::min(height, canvas.bottom() - top); ++py) {
         for (int px = 0; px < width; ++px) {
             size_t index = static_cast<size_t>(py * art->height / height) * art->stride +
                            static_cast<size_t>(px * art->width / width) * 2;
@@ -166,9 +169,8 @@ void controls(Canvas& canvas, const Model& model, uint64_t now) {
 } // namespace
 
 bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* artwork) {
-    if (!frame.pixels || frame.width < 128 || frame.height < 128 || frame.width > max_frame_width ||
-        frame.height > max_frame_height || frame.stride < frame.width ||
-        frame.capacity < size_t(frame.stride) * frame.height) return false;
+    if (!frame.valid() || frame.width < 128 || frame.height < 128 || frame.width > max_frame_width ||
+        frame.height > max_frame_height) return false;
     Canvas canvas{frame};
     int scale = frame.width >= 200 ? 2 : 1;
     canvas.rect(0, 0, frame.width, frame.height, background);
@@ -194,7 +196,7 @@ bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* art
             canvas.rect(4 * scale, frame.height - 20 * scale, width, 2 * scale, accent);
         }
     } else {
-        for (int y = 14; y < frame.height - 16; ++y)
+        for (int y = std::max(14, canvas.top()); y < std::min(int(frame.height) - 16, canvas.bottom()); ++y)
             for (int x = 2; x < frame.width - 2; ++x)
                 if (noise(uint32_t(x / 2) + uint32_t(y / 2) * 997) % 733 == 0) canvas.pixel(x, y, dim);
         planet(canvas, model, now_ms);
@@ -205,9 +207,9 @@ bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* art
 }
 
 uint32_t frame_hash(const Frame& frame) {
-    if (!frame.pixels || frame.stride < frame.width || frame.capacity < size_t(frame.stride) * frame.height) return 0;
+    if (!frame.valid()) return 0;
     uint32_t hash = 2166136261U;
-    for (size_t y = 0; y < frame.height; ++y) {
+    for (size_t y = 0; y < frame.rows(); ++y) {
         for (size_t x = 0; x < frame.width; ++x) {
             uint16_t pixel = frame.pixels[y * frame.stride + x];
             hash = (hash ^ (pixel & 255)) * 16777619U;

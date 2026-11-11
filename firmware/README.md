@@ -46,3 +46,24 @@ Artwork is a borrowed view of a validated complete BTAR buffer, at most 115216 b
 `board/board.hpp` separates time, bounded playback delivery, input events, intent transport and frame presentation. The simulated adapter logs intents and frame hashes; it does not transmit controls. The target loop polls once per second and renders every 50 ms. It uses internal memory and a 24 KiB main task stack. The board implementation must own bounded transport buffers, artwork lifetime and button/touch mapping.
 
 A real adapter requires verified board model, panel controller and wiring, display dimensions/orientation and touch controller/pins. Then verify PSRAM, actual startup, framebuffer memory, display throughput and input behavior. Spotify account setup and network/device authentication also remain external commissioning work. Compilation alone cannot establish any of these physical outcomes.
+
+## Explicit live companion mode
+
+After importing the separately verified `network` component:
+
+```fish
+/usr/bin/fish --no-config firmware/tools/build-live.fish
+/usr/bin/fish --no-config firmware/tools/build-live.fish recovered
+```
+
+The first compiles live transport with headless output; the second also opts into the recovered SPI adapter. Both use the 240 by 296 layout. Neither helper runs the application, joins Wi-Fi or flashes a device. Network configuration is blank by default and lives in the ignored component-local `network.local.hpp`, described in the network component documentation.
+
+One background task owns the network client, JSON parsing, downloads and control delivery. The renderer only copies a bounded typed snapshot and up to 18432 pixel bytes under a brief mutex, then releases it before applying state or rendering. It never calls transport methods. The network task holds no lock across a request. Cached artwork is copied before the transport can reuse its buffer. The renderer skips a busy handoff rather than blocking local animation.
+
+There are four queued intent slots, with a 15-second expiry and no retry of ambiguous POSTs. Live mode disables simulated input completely. Physical touch remains unconfigured, so this build does not originate any controls automatically. The portable control core and host integration harness can still exercise the five intents. The runtime uses static lifetime and starts once; `stop()` requests cancellation and waits for the background owner to clean up.
+
+The live main task has an 8 KiB stack; the background task has a statically allocated 24 KiB stack. The build writes `memory-report.json` beside its ELF and prints linked internal RAM usage. PSRAM remains disabled. Runtime heap usage, task stack margins and connection behavior have not been measured on hardware.
+
+Live mode stores sixteen rows at a time, using 7680 bytes instead of a 142080-byte full framebuffer. Each band retains the full 240 by 296 layout coordinates. One model/time/artwork snapshot remains fixed across the entire frame; handoff consumption happens only before its first band. Raster loops clip their vertical work to the stored rows. The SPI adapter sets the matching row window for each band, including the final eight rows. Native tests reconstruct frames and compare every pixel with full-frame rendering for playing, paused, idle, offline, missing artwork, album context and all five planet families. The offline profiles and native export continue to support full-frame buffers.
+
+The linked free-memory figure excludes runtime Wi-Fi buffers, TLS handshakes, the internal client allocation, main/system task stacks and allocator overhead. It is not a usable-heap measurement or proof of sustained networking. Commissioning must record minimum internal heap, largest free block, both task stack high-water marks, frame times and recovery through failed connections before deployment.

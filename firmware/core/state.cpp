@@ -21,6 +21,10 @@ Error Model::ingest(const char* json, size_t bytes, uint64_t now_ms, uint64_t un
     Snapshot candidate;
     Error error = parse_snapshot(json, bytes, candidate);
     if (error != Error::none) { disconnected(); return error; }
+    return apply_snapshot(candidate, now_ms, unix_ms);
+}
+
+Error Model::apply_snapshot(const Snapshot& candidate, uint64_t now_ms, uint64_t unix_ms) {
     if (received && candidate.updated_at_ms < snapshot.updated_at_ms) {
         disconnected();
         return Error::stale;

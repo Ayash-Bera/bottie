@@ -39,7 +39,10 @@ bool SimulatedBoard::control(const char* json, size_t length) {
 }
 
 bool SimulatedBoard::present(const Frame& frame) {
-    if (++presents_ % 100 == 0) std::printf("Headless frame hash: %08lx\n", static_cast<unsigned long>(frame_hash(frame)));
+    if (!frame.valid()) return false;
+    if (frame.storage_y + frame.rows() != frame.height) return true;
+    if (++presents_ % 100 == 0) std::printf("Headless %s hash: %08lx\n", frame.storage_y ? "final band" : "frame",
+                                         static_cast<unsigned long>(frame_hash(frame)));
     return true;
 }
 } // namespace bottie

@@ -14,12 +14,14 @@ public:
     std::vector<unsigned> delays, commands;
     std::vector<bool> resets;
     std::vector<uint8_t> bytes;
+    std::vector<std::vector<uint8_t>> parameters;
     size_t chunks{}, stop_at{};
     bool started{}, ended{};
     bool reset_level(bool high) override { resets.push_back(high); return true; }
     void delay_ms(uint16_t ms) override { delays.push_back(ms); }
     bool command(uint8_t code, const uint8_t* data, size_t length) override {
         commands.push_back(code);
+        parameters.emplace_back(data, data + length);
         sequence_hash = (sequence_hash ^ code) * 16777619U;
         sequence_hash = (sequence_hash ^ static_cast<uint8_t>(length)) * 16777619U;
         for (size_t i = 0; i < length; ++i) sequence_hash = (sequence_hash ^ data[i]) * 16777619U;
@@ -51,6 +53,7 @@ int main() {
     CHECK(bottie::recovered::present(transfer, frame));
     CHECK(transfer.started && transfer.ended && transfer.bytes.size() == 142080);
     CHECK((transfer.commands == std::vector<unsigned>{0x2a,0x2b}));
+    CHECK((transfer.parameters[1] == std::vector<uint8_t>{0,0,1,0x27}));
     for (size_t y = 0; y < 296; ++y) {
         for (size_t x = 0; x < 240; ++x) {
             size_t offset = (y * 240 + x) * 2;
@@ -60,6 +63,14 @@ int main() {
     RecordingTransport broken;
     broken.stop_at = 5;
     CHECK(!bottie::recovered::present(broken, frame) && broken.ended && broken.chunks == 5);
+    bottie::Frame band{pixels.data() + 288 * 242, 8 * 242, 240, 296, 242, 288, 8};
+    RecordingTransport tail;
+    CHECK(bottie::recovered::present(tail, band) && tail.ended && tail.chunks == 1);
+    CHECK((tail.parameters[1] == std::vector<uint8_t>{1,0x20,1,0x27}));
+    CHECK((tail.bytes == std::vector<uint8_t>(transfer.bytes.begin() + 288 * 480, transfer.bytes.end())));
+    band.storage_height = 9;
+    RecordingTransport overflow;
+    CHECK(!bottie::recovered::present(overflow, band) && overflow.commands.empty());
     RecordingTransport invalid;
     frame.capacity = 240;
     CHECK(!bottie::recovered::present(invalid, frame) && invalid.commands.empty() && !invalid.started);

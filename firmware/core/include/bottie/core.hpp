@@ -58,6 +58,8 @@ struct Model {
     uint32_t planet_seed{0x74b39ac1U};
 
     Error ingest(const char* json, size_t bytes, uint64_t now_ms, uint64_t unix_ms = 0);
+    // Accept only snapshots already validated by parse_snapshot.
+    Error apply_snapshot(const Snapshot& candidate, uint64_t now_ms, uint64_t unix_ms = 0);
     void disconnected();
     Playback effective_state(uint64_t now_ms) const;
     uint64_t progress(uint64_t now_ms) const;
@@ -78,6 +80,13 @@ struct Frame {
     uint16_t* pixels{};
     size_t capacity{};
     uint16_t width{}, height{}, stride{};
+    uint16_t storage_y{}, storage_height{};
+
+    uint16_t rows() const { return storage_height ? storage_height : height; }
+    bool valid() const {
+        return pixels && width && height && stride >= width && storage_y < height &&
+               rows() <= height - storage_y && capacity >= size_t(stride) * rows();
+    }
 };
 
 bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* artwork = nullptr);

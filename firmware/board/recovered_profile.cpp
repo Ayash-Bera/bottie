@@ -17,14 +17,16 @@ bool initialize(Transport& transport) {
 }
 
 bool present(Transport& transport, const Frame& frame) {
-    if (!frame.pixels || frame.width != width || frame.height != height || frame.stride < width ||
-        frame.capacity < size_t(frame.stride) * height) return false;
-    constexpr uint8_t columns[] = {0,0,0,0xef}, rows[] = {0,0,1,0x27};
+    if (!frame.valid() || frame.width != width || frame.height != height) return false;
+    constexpr uint8_t columns[] = {0,0,0,0xef};
+    const uint16_t last = frame.storage_y + frame.rows() - 1;
+    const uint8_t rows[] = {static_cast<uint8_t>(frame.storage_y >> 8), static_cast<uint8_t>(frame.storage_y),
+                            static_cast<uint8_t>(last >> 8), static_cast<uint8_t>(last)};
     if (!transport.command(0x2a, columns, sizeof columns) || !transport.command(0x2b, rows, sizeof rows) ||
         !transport.begin_pixels()) return false;
     alignas(4) std::array<uint8_t, width * 2 * 8> bytes{};
-    for (size_t y = 0; y < height; y += 8) {
-        size_t count = std::min(size_t(8), size_t(height) - y);
+    for (size_t y = 0; y < frame.rows(); y += 8) {
+        size_t count = std::min(size_t(8), size_t(frame.rows()) - y);
         for (size_t row = 0; row < count; ++row) {
             for (size_t x = 0; x < width; ++x) {
                 uint16_t pixel = frame.pixels[(y + row) * frame.stride + x];
