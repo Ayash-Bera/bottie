@@ -50,6 +50,8 @@ void LiveRuntime::publish(bool online, const Snapshot* snapshot, const Artwork* 
 
 void LiveRuntime::work() {
     if (!client_.start()) {
+        status_ = client_.status();
+        stack_free_ = uxTaskGetStackHighWaterMark(nullptr);
         std::puts("Companion transport not started; check local configuration");
         publish(false);
         return;
@@ -61,11 +63,21 @@ void LiveRuntime::work() {
         if (stopping_) break;
         size_t length = 0;
         uint64_t observed = now_ms();
+        bool accepted = false;
         if (client_.playback(body_.data(), body_.size(), length)) {
             Snapshot snapshot;
-            if (parse_snapshot(body_.data(), length, snapshot) == Error::none) publish(true, &snapshot, client_.artwork(), observed);
+            if (parse_snapshot(body_.data(), length, snapshot) == Error::none) {
+                publish(true, &snapshot, client_.artwork(), observed);
+                accepted = true;
+            }
             else publish(false);
         } else publish(false);
+        ++polls_;
+        if (accepted) ++accepted_;
+        else ++rejected_;
+        status_ = client_.status();
+        poll_ms_ = static_cast<uint32_t>(now_ms() - observed);
+        stack_free_ = uxTaskGetStackHighWaterMark(nullptr);
         // Cancellation can interrupt the next request without waiting for a full poll interval.
         for (unsigned n = 0; n < 10 && !stopping_; ++n) vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -95,5 +107,9 @@ bool LiveRuntime::enqueue(const Intent& intent) {
 const Artwork* LiveRuntime::artwork() {
     displayed_view_ = displayed_.artwork();
     return displayed_view_.pixels ? &displayed_view_ : nullptr;
+}
+
+RuntimeHealth LiveRuntime::health() const {
+    return {status_.load(), polls_.load(), accepted_.load(), rejected_.load(), stack_free_.load(), poll_ms_.load()};
 }
 } // namespace bottie

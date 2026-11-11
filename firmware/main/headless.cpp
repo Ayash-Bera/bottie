@@ -14,6 +14,9 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_heap_caps.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 
 #ifndef BOTTIE_FRAME_WIDTH
 #define BOTTIE_FRAME_WIDTH 128
@@ -21,6 +24,7 @@
 #endif
 
 extern "C" void app_main(void) {
+    std::printf("BOTTIE_BOOT reset_reason=%d\n", static_cast<int>(esp_reset_reason()));
     static bottie::Model model;
 #if BOTTIE_RECOVERED_PANEL
     static bottie::RecoveredBoard board;
@@ -49,7 +53,9 @@ extern "C" void app_main(void) {
     std::puts("Synthetic playback and input profile");
     uint64_t poll_at = 0;
 #endif
+    uint64_t report_at = 0, frame_count = 0, frame_errors = 0, max_frame_us = 0;
     for (;;) {
+        const uint64_t started_us = esp_timer_get_time();
         uint64_t now = board.monotonic_ms();
 #if BOTTIE_LIVE_COMPANION
         live.consume(model);
@@ -87,8 +93,27 @@ extern "C" void app_main(void) {
             frame.storage_height = std::min(stored_rows, static_cast<uint16_t>(frame.height - y));
             if (!bottie::render(model, now, frame, artwork) || !board.present(frame)) {
                 std::puts("Frame rejected");
+                ++frame_errors;
                 break;
             }
+        }
+        ++frame_count;
+        max_frame_us = std::max(max_frame_us, static_cast<uint64_t>(esp_timer_get_time()) - started_us);
+        if (now >= report_at) {
+            constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+            std::printf("BOTTIE_HEALTH uptime_ms=%llu frames=%llu frame_errors=%llu max_frame_us=%llu heap=%u min_heap=%u largest=%u main_stack_free=%u state=%s art=%u\n",
+                static_cast<unsigned long long>(now), static_cast<unsigned long long>(frame_count),
+                static_cast<unsigned long long>(frame_errors), static_cast<unsigned long long>(max_frame_us),
+                static_cast<unsigned>(heap_caps_get_free_size(caps)), static_cast<unsigned>(heap_caps_get_minimum_free_size(caps)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(caps)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
+                bottie::playback_name(model.effective_state(now)), artwork ? 1U : 0U);
+#if BOTTIE_LIVE_COMPANION
+            const auto health = live.health();
+            std::printf("BOTTIE_NETWORK status=%u polls=%u accepted=%u rejected=%u stack_free=%u poll_ms=%u\n",
+                static_cast<unsigned>(health.status), static_cast<unsigned>(health.polls), static_cast<unsigned>(health.accepted),
+                static_cast<unsigned>(health.rejected), static_cast<unsigned>(health.stack_free), static_cast<unsigned>(health.poll_ms));
+#endif
+            report_at = now + 10000;
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }

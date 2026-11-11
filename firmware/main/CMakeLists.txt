@@ -10,7 +10,7 @@ else()
     set(app_sources "smoke.c")
 endif()
 idf_component_register(SRCS ${app_sources}
-                       PRIV_REQUIRES spi_flash bottie_core esp_timer esp_driver_spi esp_driver_gpio
+                       PRIV_REQUIRES spi_flash bottie_core esp_timer esp_driver_spi esp_driver_gpio esp_system heap
                        INCLUDE_DIRS "../board")
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_17)
 if(BOTTIE_RECOVERED_PANEL)

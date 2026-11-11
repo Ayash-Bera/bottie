@@ -11,6 +11,11 @@
 #include "freertos/task.h"
 
 namespace bottie {
+struct RuntimeHealth {
+    network::Status status{network::Status::disabled};
+    uint32_t polls{}, accepted{}, rejected{}, stack_free{}, poll_ms{};
+};
+
 class LiveRuntime {
 public:
     bool start();
@@ -18,6 +23,7 @@ public:
     void consume(Model& model);
     bool enqueue(const Intent& intent);
     const Artwork* artwork();
+    RuntimeHealth health() const;
 private:
     struct Control { char json[64]; uint64_t queued_ms; };
     static constexpr size_t stack_bytes = 24 * 1024;
@@ -36,6 +42,8 @@ private:
     SemaphoreHandle_t mutex_{}, stopped_{};
     QueueHandle_t queue_{};
     std::atomic<bool> running_{false}, stopping_{false};
+    std::atomic<network::Status> status_{network::Status::disabled};
+    std::atomic<uint32_t> polls_{}, accepted_{}, rejected_{}, stack_free_{}, poll_ms_{};
     uint32_t published_{}, consumed_{};
     bool started_{};
 };
