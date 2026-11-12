@@ -113,7 +113,7 @@ static int text_render(TextEngine *e, const char *input, int width, int height, 
             text_candidate(candidate, value, cuts[n], length);
             pango_layout_set_text(layout, candidate, -1);
             pango_layout_get_pixel_extents(layout, &ink, NULL);
-            if (ink.height > height) break;
+            if (ink.height > height) continue;
             if (ink.width <= width) { selected = cuts[n]; *font_size = pixels; break; }
         }
     }

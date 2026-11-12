@@ -124,3 +124,12 @@ func TestBoundedColdAndWarmRendering(t *testing.T) {
 		t.Fatal("bounded text batch exceeded five seconds")
 	}
 }
+
+func TestTallTerminalClusterKeepsEarlierFittingPrefix(t *testing.T) {
+	r := native(t)
+	value := "....東京"
+	_, info, err := r.renderLine(value, Slot{Width: 216, Height: 8})
+	if err != nil || info.RetainedBytes == 0 || info.RetainedBytes > len("....") {
+		t.Fatalf("earlier fitting prefix lost: retained=%d err=%v", info.RetainedBytes, err)
+	}
+}
