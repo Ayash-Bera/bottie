@@ -315,6 +315,65 @@ void ui_checks() {
         }
     }
 }
+void header_centering_checks() {
+    const std::array<std::array<uint16_t, 2>, 6> sizes{{
+        {128,128}, {199,240}, {200,240}, {239,295}, {240,240}, {240,296}
+    }};
+    const std::vector<std::string> labels{
+        "i", " lil ", "desk orbits", std::string(80,'w'), "a\xe2\x80\x99s \xe2\x80\x94 worlds", "", "   "
+    };
+    for (auto size : sizes) {
+        uint16_t width = size[0], height = size[1];
+        std::vector<uint16_t> pixels(width * height);
+        Frame frame{pixels.data(), pixels.size(), width, height, width};
+        Model model;
+        CHECK(ingest(model,valid,0) == Error::none);
+        auto centered = [&](int y, uint16_t color, bool empty) {
+            int left = width, right = -1;
+            for (int row = y; row < y+7; ++row) for (int x = 0; x < width; ++x)
+                if (pixels[row*width+x] == color) { left = std::min(left,x); right = std::max(right,x); }
+            if (empty) CHECK(right == -1);
+            else CHECK(right >= left && std::abs(left - (width-1-right)) <= 1);
+        };
+        int scale = width >= 200 ? 2 : 1;
+        for (const auto& label : labels) {
+            bool empty = label.find_first_not_of(' ') == std::string::npos;
+            model.snapshot.context_type = Context::playlist;
+            std::strcpy(model.snapshot.context_name,label.c_str());
+            model.snapshot.album[0] = 0;
+            CHECK(render(model,0,frame));
+            centered(6*scale,0xd5b1,empty);
+
+            std::strcpy(model.snapshot.context_name," ");
+            std::strcpy(model.snapshot.album,label.c_str());
+            CHECK(render(model,0,frame));
+            centered(12*scale,0x7c50,empty);
+
+            for (auto context : {Context::unknown,Context::album,Context::playlist}) {
+                model.snapshot.context_type = context;
+                model.snapshot.context_name[0] = 0;
+                CHECK(render(model,0,frame));
+                centered(6*scale,0xd5b1,empty);
+            }
+        }
+    }
+    Model model;
+    CHECK(ingest(model,valid,0) == Error::none);
+    std::vector<uint16_t> full(240*296), clipped(full.size());
+    Frame a{full.data(),full.size(),240,296,240}, b{clipped.data(),clipped.size(),240,296,240};
+    std::strcpy(model.snapshot.context_name,std::string(80,'w').c_str());
+    std::strcpy(model.snapshot.album,std::string(80,'i').c_str());
+    CHECK(render(model,0,a));
+    std::strcpy(model.snapshot.context_name,(std::string(32,'w')+"...").c_str());
+    std::strcpy(model.snapshot.album,(std::string(30,'i')+"...").c_str());
+    CHECK(render(model,0,b) && full == clipped);
+    std::array<uint16_t,240*16> band{};
+    for (uint16_t y = 0; y < 296; y += 16) {
+        uint16_t rows = std::min<uint16_t>(16,296-y);
+        CHECK(render(model,0,{band.data(),band.size(),240,296,240,y,rows}));
+        CHECK(std::equal(band.begin(),band.begin()+240*rows,full.begin()+240*y));
+    }
+}
 } // namespace
 
 int main() {
@@ -323,5 +382,6 @@ int main() {
     control_checks();
     artwork_render_checks();
     ui_checks();
+    header_centering_checks();
     std::puts("BOTTIE_CORE_CHECKS_OK parser/state/controls/artwork/render");
 }

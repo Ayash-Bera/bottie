@@ -129,7 +129,7 @@ char display_character(const char*& value) {
     return '?';
 }
 
-void text(Canvas& canvas, int x, int y, const char* value, int right, uint16_t color, int scale = 1) {
+void text(Canvas& canvas, int x, int y, const char* value, int right, uint16_t color, int scale = 1, bool center = false) {
     if (y + 7 * scale <= canvas.top() || y >= canvas.bottom()) return;
     int slots = std::max(0, (right - x + scale) / (6 * scale));
     const char* scan = value;
@@ -137,6 +137,21 @@ void text(Canvas& canvas, int x, int y, const char* value, int right, uint16_t c
     while (*scan) { display_character(scan); ++length; }
     bool clipped = length > slots;
     int visible = clipped ? std::max(0, slots - 3) : length;
+    if (center) {
+        // Keep the clipping budget while centering the actual emitted glyph pixels.
+        scan = value;
+        int first = canvas.frame.width, last = -1;
+        for (int n = 0; n < std::min(length, slots); ++n) {
+            char c = clipped && n >= visible ? '.' : display_character(scan);
+            const uint8_t* columns = glyph(c);
+            for (int col = 0; col < 5; ++col) if (columns[col]) {
+                first = std::min(first, (n * 6 + col) * scale);
+                last = std::max(last, (n * 6 + col + 1) * scale - 1);
+            }
+        }
+        if (last < first) return;
+        x = (canvas.frame.width - (last - first + 1)) / 2 - first;
+    }
     for (int n = 0; n < std::min(length, slots); ++n) {
         char c = clipped && n >= visible ? '.' : display_character(value);
         const uint8_t* columns = glyph(c);
@@ -343,8 +358,8 @@ bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* art
         Color tint = artwork_color(active_art);
         uint16_t accent = color565(tint);
         bool playlist = snapshot.context_type == Context::playlist && snapshot.context_name[0];
-        text(canvas, 7 * scale, 6 * scale, playlist ? snapshot.context_name : snapshot.album, frame.width - 7 * scale, accent);
-        if (playlist) text(canvas, 12 * scale, 12 * scale, snapshot.album, frame.width - 7 * scale, dim);
+        text(canvas, 7 * scale, 6 * scale, playlist ? snapshot.context_name : snapshot.album, frame.width - 7 * scale, accent, 1, true);
+        if (playlist) text(canvas, 12 * scale, 12 * scale, snapshot.album, frame.width - 7 * scale, dim, 1, true);
         int side = std::min(frame.width * 128/240, frame.height * 128/296);
         if (side <= 0) return false;
         int left = frame.width*22/240, top = frame.height*50/296;
