@@ -29,6 +29,7 @@ type Capabilities struct {
 	Next     bool `json:"next"`
 	Shuffle  bool `json:"shuffle"`
 	Repeat   bool `json:"repeat"`
+	Volume   bool `json:"volume"`
 }
 
 func (c Capabilities) Allows(action string) bool {
@@ -45,6 +46,8 @@ func (c Capabilities) Allows(action string) bool {
 		return c.Shuffle
 	case "repeat":
 		return c.Repeat
+	case "volume":
+		return c.Volume
 	}
 	return false
 }
@@ -64,6 +67,8 @@ type Playback struct {
 	Repeat        string       `json:"repeat"`
 	Artwork       Artwork      `json:"artwork"`
 	Capabilities  Capabilities `json:"capabilities"`
+	VolumePercent *int         `json:"volume_percent"`
+	ControlTarget string       `json:"control_target"`
 }
 
 func Empty(state string) Playback {
@@ -115,16 +120,39 @@ func (p Playback) Bounded() Playback {
 	}
 	if p.State == "idle" || p.State == "unavailable" {
 		p.Capabilities = Capabilities{}
+		p.VolumePercent = nil
+		p.ControlTarget = ""
+	}
+	if p.VolumePercent != nil {
+		value := *p.VolumePercent
+		p.VolumePercent = nil
+		if value >= 0 && value <= 100 {
+			p.VolumePercent = &value
+		}
+	}
+	if !ValidControlTarget(p.ControlTarget) {
+		p.ControlTarget = ""
+		p.Capabilities.Volume = false
 	}
 	return p
 }
 
 type Control struct {
-	Action string          `json:"action"`
-	Value  json.RawMessage `json:"value,omitempty"`
+	Action        string          `json:"action"`
+	Value         json.RawMessage `json:"value,omitempty"`
+	ControlTarget string          `json:"control_target,omitempty"`
+}
+
+func ValidControlTarget(value string) bool {
+	return len(value) == 32 && strings.IndexFunc(value, func(r rune) bool {
+		return !strings.ContainsRune("0123456789abcdef", r)
+	}) == -1
 }
 
 func (c Control) Validate() error {
+	if c.ControlTarget != "" && !ValidControlTarget(c.ControlTarget) {
+		return fmt.Errorf("invalid control target")
+	}
 	switch c.Action {
 	case "play", "pause", "previous", "next":
 		if len(c.Value) == 0 {
@@ -139,12 +167,19 @@ func (c Control) Validate() error {
 		if json.Unmarshal(c.Value, &s) == nil && (s == "off" || s == "context" || s == "track") {
 			return nil
 		}
+	case "volume":
+		var value int
+		raw := strings.TrimSpace(string(c.Value))
+		if ValidControlTarget(c.ControlTarget) && raw != "" && raw[0] >= '0' && raw[0] <= '9' && json.Unmarshal(c.Value, &value) == nil && value >= 0 && value <= 100 {
+			return nil
+		}
 	}
 	return fmt.Errorf("invalid action or value")
 }
 
 func (c Control) Bool() bool     { return string(c.Value) == "true" }
 func (c Control) String() string { var s string; _ = json.Unmarshal(c.Value, &s); return s }
+func (c Control) Int() int       { var n int; _ = json.Unmarshal(c.Value, &n); return n }
 
 type ServiceError struct {
 	Code       string

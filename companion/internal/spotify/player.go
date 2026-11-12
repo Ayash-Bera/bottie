@@ -59,6 +59,9 @@ type Player struct {
 	storeRetry                             time.Time
 	storeError                             *models.ServiceError
 	authorization                          AuthorizationStatus
+	device                                 DeviceStatus
+	targetID                               string
+	volumeAfter                            time.Time
 }
 
 func New(clientID, redirectURI string, art *artwork.Store, client *http.Client) *Player {
@@ -103,18 +106,29 @@ func (p *Player) Snapshot() (models.Playback, *models.ServiceError) {
 		copy := *e
 		e = &copy
 	}
-	if s.State != "unavailable" && p.now().UnixMilli()-s.UpdatedAtMS > 15000 {
+	age := p.now().UnixMilli() - s.UpdatedAtMS
+	if s.State != "unavailable" && (age < 0 || age > 15000) {
 		s.State = "unavailable"
 		s.Capabilities = models.Capabilities{}
+		s.ControlTarget = ""
+		s.VolumePercent = nil
 		e = unavailable()
 	}
-	return s, e
+	return s.Bounded(), e
 }
 func (p *Player) save(s models.Playback, e *models.ServiceError) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.saveLocked(s, e)
+}
+func (p *Player) saveLocked(s models.Playback, e *models.ServiceError) {
 	p.cached = s.Bounded()
 	p.problem = e
+	if e != nil || p.cached.ControlTarget == "" {
+		p.cached.ControlTarget = ""
+		p.cached.Capabilities.Volume = false
+		p.targetID = ""
+	}
 }
 func (p *Player) fail(e *models.ServiceError) {
 	s, _ := p.Snapshot()
@@ -341,7 +355,7 @@ func (p *Player) request(ctx context.Context, method, path string) ([]byte, int,
 		return nil, 0, e
 	}
 	b, status, e := p.send(ctx, method, p.apiURL+path, nil, p.tokens.access)
-	if e == nil && status == 401 {
+	if e == nil && status == 401 && method == http.MethodGet {
 		p.tokens.expires = time.Time{}
 		if e = p.ensureToken(ctx); e != nil {
 			return nil, 0, e
@@ -366,15 +380,12 @@ func (p *Player) request(ctx context.Context, method, path string) ([]byte, int,
 }
 
 type upstream struct {
-	Device *struct {
-		Active     bool `json:"is_active"`
-		Restricted bool `json:"is_restricted"`
-	} `json:"device"`
-	Playing  bool   `json:"is_playing"`
-	Progress int64  `json:"progress_ms"`
-	Shuffle  bool   `json:"shuffle_state"`
-	Repeat   string `json:"repeat_state"`
-	Type     string `json:"currently_playing_type"`
+	Device   *upstreamDevice `json:"device"`
+	Playing  bool            `json:"is_playing"`
+	Progress int64           `json:"progress_ms"`
+	Shuffle  bool            `json:"shuffle_state"`
+	Repeat   string          `json:"repeat_state"`
+	Type     string          `json:"currently_playing_type"`
 	Context  *struct {
 		Type string `json:"type"`
 		URI  string `json:"uri"`
@@ -398,7 +409,7 @@ type upstream struct {
 }
 
 func (u upstream) capabilities(control bool) models.Capabilities {
-	if !control || u.Device == nil || !u.Device.Active || u.Device.Restricted || u.Item == nil || u.Item.Type != "track" {
+	if !control || !u.Device.usable() || u.Item == nil || u.Item.Type != "track" || (u.Type != "" && u.Type != "track") {
 		return models.Capabilities{}
 	}
 	disallowed := map[string]bool{}
@@ -480,7 +491,7 @@ func (p *Player) Poll(ctx context.Context) {
 	s.UpdatedAtMS = p.now().UnixMilli()
 	if status == 204 {
 		p.failures = 0
-		p.save(s, nil)
+		p.saveObservation(s, nil)
 		return
 	}
 	var u upstream
@@ -489,7 +500,7 @@ func (p *Player) Poll(ctx context.Context) {
 		return
 	}
 	if u.Item == nil {
-		p.save(s, nil)
+		p.saveObservation(s, u.Device)
 		return
 	}
 	if u.Item.Type != "track" || (u.Type != "" && u.Type != "track") {
@@ -535,7 +546,7 @@ func (p *Player) Poll(ctx context.Context) {
 		return
 	}
 	p.failures = 0
-	p.save(s, nil)
+	p.saveObservation(s, u.Device)
 }
 
 func (p *Player) Run(ctx context.Context, interval time.Duration) {
@@ -569,18 +580,39 @@ func (p *Player) Control(ctx context.Context, c models.Control) *models.ServiceE
 	if e != nil {
 		return e
 	}
+	if c.ControlTarget != "" && c.ControlTarget != s.ControlTarget {
+		return targetChanged()
+	}
 	if !s.Capabilities.Allows(c.Action) {
 		return models.Problem("unsupported", 409, "this control is unavailable for the active playback device")
+	}
+	if c.Action == "volume" && p.now().Before(p.volumeAfter) {
+		return &models.ServiceError{Code: "rate_limited", Status: 429, Message: "wait before another volume change", RetryAfter: 1}
+	}
+	query := url.Values{}
+	if c.ControlTarget != "" {
+		id, e := p.checkTarget(ctx, c.Action)
+		if e != nil {
+			return e
+		}
+		query.Set("device_id", id)
 	}
 	method, path := http.MethodPut, "/me/player/"+c.Action
 	if c.Action == "next" || c.Action == "previous" {
 		method = http.MethodPost
 	}
 	if c.Action == "shuffle" {
-		path += "?state=" + strconv.FormatBool(c.Bool())
+		query.Set("state", strconv.FormatBool(c.Bool()))
 	}
 	if c.Action == "repeat" {
-		path += "?state=" + c.String()
+		query.Set("state", c.String())
+	}
+	if c.Action == "volume" {
+		query.Set("volume_percent", strconv.Itoa(c.Int()))
+		p.volumeAfter = p.now().Add(time.Second)
+	}
+	if len(query) != 0 {
+		path += "?" + query.Encode()
 	}
 	_, _, e = p.request(ctx, method, path)
 	if e != nil {

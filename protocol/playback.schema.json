@@ -15,7 +15,9 @@
     "updated_at_ms":{"type":"integer","minimum":0,"maximum":9007199254740991},
     "shuffle":{"type":"boolean"},"repeat":{"enum":["off","context","track"]},
     "artwork":{"type":"object","required":["url","width","height"],"additionalProperties":false,"properties":{"url":{"type":"string","maxLength":256},"width":{"type":"integer","minimum":0,"maximum":240},"height":{"type":"integer","minimum":0,"maximum":240}}},
-    "capabilities":{"type":"object","required":["play","pause","previous","next","shuffle","repeat"],"additionalProperties":false,"properties":{"play":{"type":"boolean"},"pause":{"type":"boolean"},"previous":{"type":"boolean"},"next":{"type":"boolean"},"shuffle":{"type":"boolean"},"repeat":{"type":"boolean"}}}
+    "volume_percent":{"type":["integer","null"],"minimum":0,"maximum":100},
+    "control_target":{"type":"string","pattern":"^(|[0-9a-f]{32})$"},
+    "capabilities":{"type":"object","required":["play","pause","previous","next","shuffle","repeat"],"additionalProperties":false,"properties":{"play":{"type":"boolean"},"pause":{"type":"boolean"},"previous":{"type":"boolean"},"next":{"type":"boolean"},"shuffle":{"type":"boolean"},"repeat":{"type":"boolean"},"volume":{"type":"boolean"}}}
   },
   "$defs":{"text":{"type":"string","maxLength":256}}
 }

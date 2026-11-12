@@ -19,7 +19,7 @@ import (
 	"bottie/companion/internal/models"
 )
 
-const playbackJSON = `{"device":{"is_active":true,"is_restricted":false},"is_playing":true,"progress_ms":1000,"shuffle_state":false,"repeat_state":"off","currently_playing_type":"track","item":{"type":"track","id":"track1","name":"Example","duration_ms":60000,"artists":[{"name":"Artist"}],"album":{"name":"Album","images":[]}},"context":{"type":"playlist","uri":"spotify:playlist:1234567890123456789012"},"actions":{"disallows":{"skipping_next":true}}}`
+const playbackJSON = `{"device":{"id":"private-device-id","is_active":true,"is_restricted":false},"is_playing":true,"progress_ms":1000,"shuffle_state":false,"repeat_state":"off","currently_playing_type":"track","item":{"type":"track","id":"track1","name":"Example","duration_ms":60000,"artists":[{"name":"Artist"}],"album":{"name":"Album","images":[]}},"context":{"type":"playlist","uri":"spotify:playlist:1234567890123456789012"},"actions":{"disallows":{"skipping_next":true}}}`
 const tokenJSON = `{"access_token":"access-secret","refresh_token":"refresh-secret","token_type":"Bearer","expires_in":3600,"scope":"user-read-playback-state user-modify-playback-state"}`
 
 func fakePlayer(t *testing.T, h http.HandlerFunc) (*Player, *time.Time) {

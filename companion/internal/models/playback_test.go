@@ -47,3 +47,33 @@ func TestBoundsAndFallbacks(t *testing.T) {
 		t.Fatalf("bounds: %+v", p)
 	}
 }
+
+func TestVolumeAndTargetValidation(t *testing.T) {
+	target := strings.Repeat("a", 32)
+	for _, value := range []string{"0", "1", "50", "100", " 25 "} {
+		if e := (Control{Action: "volume", Value: json.RawMessage(value), ControlTarget: target}).Validate(); e != nil {
+			t.Fatalf("valid percent rejected: %s", value)
+		}
+	}
+	for _, value := range []string{"", "null", "true", `"50"`, "-1", "101", "1.5", "1.0", "1e2", "01", "+1", "{}", "[]", "999999999999999999999999"} {
+		if e := (Control{Action: "volume", Value: json.RawMessage(value), ControlTarget: target}).Validate(); e == nil {
+			t.Fatalf("invalid percent accepted: %s", value)
+		}
+	}
+	for _, guard := range []string{"", strings.Repeat("A", 32), strings.Repeat("a", 31), strings.Repeat("a", 33), strings.Repeat("g", 32)} {
+		if e := (Control{Action: "volume", Value: json.RawMessage("50"), ControlTarget: guard}).Validate(); e == nil {
+			t.Fatal("invalid generation accepted")
+		}
+	}
+	if e := (Control{Action: "pause", ControlTarget: target}).Validate(); e != nil {
+		t.Fatal("guarded legacy action rejected")
+	}
+	for _, state := range []string{"playing", "paused", "idle", "unavailable"} {
+		zero := 0
+		p := Playback{State: state, VolumePercent: &zero, ControlTarget: target, Capabilities: Capabilities{Volume: true}}.Bounded()
+		active := state == "playing" || state == "paused"
+		if (p.VolumePercent != nil) != active || p.Capabilities.Volume != active || (p.ControlTarget != "") != active {
+			t.Fatal("state bounds", state)
+		}
+	}
+}

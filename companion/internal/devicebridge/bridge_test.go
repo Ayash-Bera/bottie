@@ -158,6 +158,9 @@ func TestFixturePlaybackArtworkAndAllControls(t *testing.T) {
 	if p.State != "paused" || p.Title != "Orbital Sunrise" {
 		t.Fatalf("unexpected fixture state: %s %s", p.State, p.Title)
 	}
+	if !p.Capabilities.Volume || p.VolumePercent == nil || *p.VolumePercent != 40 || !models.ValidControlTarget(p.ControlTarget) {
+		t.Fatal("volume observation or opaque target lost through gateway")
+	}
 	if data := get(p.Artwork.URL).Body.Bytes(); len(data) != maxArtwork || !validArtwork(data) {
 		t.Fatal("fixture artwork rejected")
 	}
@@ -174,6 +177,68 @@ func TestFixturePlaybackArtworkAndAllControls(t *testing.T) {
 	h.ServeHTTP(w, testRequest("POST", "/v1/control", `{"action":"next","action":"play"}`))
 	if w.Code != 400 {
 		t.Fatal("upstream duplicate control validation lost")
+	}
+	for _, tt := range []struct {
+		value, target string
+		status        int
+	}{
+		{"0", p.ControlTarget, 200}, {"100", p.ControlTarget, 200},
+		{"101", p.ControlTarget, 400}, {"-1", p.ControlTarget, 400},
+		{"1.0", p.ControlTarget, 400}, {"null", p.ControlTarget, 400},
+		{"50", "", 400}, {"50", strings.Repeat("f", 32), 409},
+	} {
+		body := `{"action":"volume","value":` + tt.value + `,"control_target":"` + tt.target + `"}`
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, testRequest("POST", "/v1/control", body))
+		if w.Code != tt.status {
+			t.Fatalf("volume %s status=%d", tt.value, w.Code)
+		}
+	}
+	if err := json.Unmarshal(get("/v1/playback").Body.Bytes(), &p); err != nil || p.VolumePercent == nil || *p.VolumePercent != 100 {
+		t.Fatal("rejected controls changed fixture volume")
+	}
+}
+
+func TestVolumeSnapshotCompatibility(t *testing.T) {
+	legacy := `{"schema_version":1,"state":"paused","capabilities":{"play":true}}`
+	guard := strings.Repeat("a", 32)
+	for _, tt := range []struct {
+		name, extension string
+		want            int
+		known, capable  bool
+	}{
+		{"legacy", "", 200, false, false},
+		{"unknown", `,"volume_percent":null,"control_target":"` + guard + `"`, 200, false, false},
+		{"zero", `,"volume_percent":0,"control_target":"` + guard + `"`, 200, true, false},
+		{"enabled", `,"volume_percent":40,"control_target":"` + guard + `"`, 200, true, true},
+		{"negative", `,"volume_percent":-1`, 502, false, false},
+		{"excess", `,"volume_percent":101`, 502, false, false},
+		{"fraction", `,"volume_percent":0.5`, 502, false, false},
+		{"string", `,"volume_percent":"40"`, 502, false, false},
+		{"invalid target", `,"control_target":"ABC"`, 502, false, false},
+		{"unprotected volume", `,"volume_percent":40`, 502, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.TrimSuffix(legacy, "}") + tt.extension + "}"
+			if tt.capable {
+				body = strings.Replace(body, `"play":true`, `"play":true,"volume":true`, 1)
+			}
+			h := withUpstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			}))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, testRequest("GET", "/v1/playback", ""))
+			if w.Code != tt.want {
+				t.Fatalf("status=%d want=%d", w.Code, tt.want)
+			}
+			if w.Code == 200 {
+				var p models.Playback
+				if json.Unmarshal(w.Body.Bytes(), &p) != nil || (p.VolumePercent != nil) != tt.known || p.Capabilities.Volume != tt.capable || !p.Capabilities.Play {
+					t.Fatal("legacy capability or volume semantics changed")
+				}
+			}
+		})
 	}
 }
 

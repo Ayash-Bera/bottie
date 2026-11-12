@@ -206,6 +206,11 @@ func decodeControl(body io.Reader) (models.Control, error) {
 			err = d.Decode(&c.Action)
 		case "value":
 			err = d.Decode(&c.Value)
+		case "control_target":
+			err = d.Decode(&c.ControlTarget)
+			if err == nil && !models.ValidControlTarget(c.ControlTarget) {
+				err = errors.New("invalid control target")
+			}
 		default:
 			return c, errors.New("unknown key")
 		}
@@ -243,7 +248,7 @@ func (s *server) control(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = c.Validate(); err != nil {
-		problem(w, models.Problem("invalid_control", 400, "use play, pause, previous, next, shuffle with boolean value, or repeat with off/context/track"))
+		problem(w, models.Problem("invalid_control", 400, "use a supported action and value; volume needs integer 0..100 and the current control_target"))
 		return
 	}
 	if e := s.player.Control(r.Context(), c); e != nil {
@@ -295,6 +300,9 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		AuthorizationStatus() spotify.AuthorizationStatus
 	}); ok {
 		body["authorization"] = source.AuthorizationStatus()
+	}
+	if source, ok := s.player.(interface{ DeviceStatus() spotify.DeviceStatus }); ok {
+		body["device"] = source.DeviceStatus()
 	}
 	jsonReply(w, 200, body)
 }

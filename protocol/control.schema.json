@@ -2,8 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Bottie control v1",
   "oneOf": [
-    {"type":"object","required":["action"],"properties":{"action":{"enum":["play","pause","previous","next"]}},"additionalProperties":false},
-    {"type":"object","required":["action","value"],"properties":{"action":{"const":"shuffle"},"value":{"type":"boolean"}},"additionalProperties":false},
-    {"type":"object","required":["action","value"],"properties":{"action":{"const":"repeat"},"value":{"enum":["off","context","track"]}},"additionalProperties":false}
+    {"type":"object","required":["action"],"properties":{"action":{"enum":["play","pause","previous","next"]},"control_target":{"type":"string","pattern":"^[0-9a-f]{32}$"}},"additionalProperties":false},
+    {"type":"object","required":["action","value"],"properties":{"action":{"const":"shuffle"},"value":{"type":"boolean"},"control_target":{"type":"string","pattern":"^[0-9a-f]{32}$"}},"additionalProperties":false},
+    {"type":"object","required":["action","value"],"properties":{"action":{"const":"repeat"},"value":{"enum":["off","context","track"]},"control_target":{"type":"string","pattern":"^[0-9a-f]{32}$"}},"additionalProperties":false},
+    {"type":"object","required":["action","value","control_target"],"properties":{"action":{"const":"volume"},"value":{"type":"integer","minimum":0,"maximum":100},"control_target":{"type":"string","pattern":"^[0-9a-f]{32}$"}},"additionalProperties":false}
   ]
 }

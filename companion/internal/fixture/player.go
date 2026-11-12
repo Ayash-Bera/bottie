@@ -16,7 +16,10 @@ type Player struct {
 	index  int
 	state  models.Playback
 	tracks []models.Playback
+	volume int
 }
+
+const target = "00000000000000000000000000000001"
 
 func New(store *artwork.Store, now func() time.Time) (*Player, error) {
 	if now == nil {
@@ -30,7 +33,7 @@ func New(store *artwork.Store, now func() time.Time) (*Player, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Player{now: now, last: now(), tracks: []models.Playback{
+	p := &Player{now: now, last: now(), volume: 40, tracks: []models.Playback{
 		{TrackID: "fixture-orbit", Title: "Orbital Sunrise", Artist: "Bottie Ensemble", Album: "Small Worlds", Context: models.Context{Type: "playlist", Name: "Desk Orbits"}, DurationMS: 180000, Artwork: first},
 		{TrackID: "fixture-tide", Title: "Quiet Tides", Artist: "Bottie Ensemble", Album: "Moonwater", DurationMS: 210000, Artwork: second},
 		{TrackID: "fixture-signal", Title: "Distant Signal", Artist: "Bottie Ensemble", DurationMS: 150000},
@@ -87,7 +90,9 @@ func (p *Player) tick() {
 		}
 	}
 	p.state.UpdatedAtMS = now.UnixMilli()
-	p.state.Capabilities = models.Capabilities{Play: p.state.State != "playing", Pause: p.state.State == "playing", Previous: true, Next: true, Shuffle: true, Repeat: true}
+	p.state.Capabilities = models.Capabilities{Play: p.state.State != "playing", Pause: p.state.State == "playing", Previous: true, Next: true, Shuffle: true, Repeat: true, Volume: true}
+	p.state.ControlTarget = target
+	p.state.VolumePercent = &p.volume
 	p.state = p.state.Bounded()
 }
 
@@ -95,7 +100,7 @@ func (p *Player) Snapshot() (models.Playback, *models.ServiceError) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.tick()
-	return p.state, nil
+	return p.state.Bounded(), nil
 }
 func (p *Player) Control(ctx context.Context, c models.Control) *models.ServiceError {
 	if err := c.Validate(); err != nil {
@@ -107,6 +112,9 @@ func (p *Player) Control(ctx context.Context, c models.Control) *models.ServiceE
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.tick()
+	if c.ControlTarget != "" && c.ControlTarget != target {
+		return models.Problem("target_changed", 409, "fixture target changed; fetch playback again")
+	}
 	switch c.Action {
 	case "play":
 		if p.state.ProgressMS == p.state.DurationMS {
@@ -131,6 +139,8 @@ func (p *Player) Control(ctx context.Context, c models.Control) *models.ServiceE
 		p.state.Shuffle = c.Bool()
 	case "repeat":
 		p.state.Repeat = c.String()
+	case "volume":
+		p.volume = c.Int()
 	}
 	return nil
 }

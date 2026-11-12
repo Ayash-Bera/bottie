@@ -245,6 +245,9 @@ func (b *bridge) forward(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			var p models.Playback
 			valid = decode(data, &p) == nil && p.SchemaVersion == 1
+			if p.VolumePercent != nil && (*p.VolumePercent < 0 || *p.VolumePercent > 100) || p.ControlTarget != "" && !models.ValidControlTarget(p.ControlTarget) || p.Capabilities.Volume && p.ControlTarget == "" {
+				valid = false
+			}
 			if p.Artwork.URL != "" && (!artworkPath(p.Artwork.URL) || p.Artwork.Width > 96 || p.Artwork.Height > 96) {
 				valid = false
 			}

@@ -227,6 +227,59 @@ func TestProtectedLoginStatus(t *testing.T) {
 	}
 }
 
+func TestVolumeHTTPValidation(t *testing.T) {
+	h, _ := fixtureServer(t, "")
+	for _, tt := range []struct {
+		body   string
+		status int
+	}{
+		{`{"action":"volume","value":0,"control_target":"00000000000000000000000000000001"}`, 200},
+		{`{"action":"volume","value":100,"control_target":"00000000000000000000000000000001"}`, 200},
+		{`{"action":"volume","value":30}`, 400},
+		{`{"action":"volume","value":30,"control_target":"00000000000000000000000000000002"}`, 409},
+		{`{"action":"volume","value":1.5,"control_target":"00000000000000000000000000000001"}`, 400},
+		{`{"action":"volume","value":null,"control_target":"00000000000000000000000000000001"}`, 400},
+		{`{"action":"volume","value":50,"control_target":null}`, 400},
+		{`{"action":"pause","control_target":""}`, 400},
+		{`{"action":"pause","control_target":false}`, 400},
+		{`{"action":"pause","control_target":"00000000000000000000000000000001","control_target":"00000000000000000000000000000001"}`, 400},
+	} {
+		w := request(h, "POST", "/v1/control", tt.body, "", "")
+		if w.Code != tt.status {
+			t.Fatalf("status %d want %d", w.Code, tt.status)
+		}
+	}
+	for _, origin := range []string{"http://foreign.invalid", "null"} {
+		if w := request(h, "POST", "/v1/control", `{"action":"volume","value":0,"control_target":"00000000000000000000000000000001"}`, "", origin); w.Code != 403 {
+			t.Fatal("foreign volume allowed")
+		}
+	}
+}
+
+func TestDeviceStatusIsLocalAndReadOnly(t *testing.T) {
+	cfg, _ := config.Parse(func(string) string { return "" })
+	art := artwork.New(96, nil)
+	p := spotify.New("private-client", "http://127.0.0.1:8787/auth/callback", art, nil)
+	h := New(cfg, p, art, p, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w := request(h, "GET", "/status", "", "", "")
+	var body struct{ Device spotify.DeviceStatus }
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &body) != nil || body.Device.Fresh || body.Device.VolumePercent != nil || body.Device.SupportsVolume != nil {
+		t.Fatal("unknown device invented")
+	}
+	for _, marker := range []string{"private-client", "access_token", "refresh_token", "device_id"} {
+		if strings.Contains(w.Body.String(), marker) {
+			t.Fatal("private status")
+		}
+	}
+	r := httptest.NewRequest("GET", "http://127.0.0.1:8787/status", nil)
+	r.RemoteAddr = "192.168.1.5:40000"
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 403 {
+		t.Fatal("LAN status exposed")
+	}
+}
+
 func TestOAuthRoutes(t *testing.T) {
 	cfg, _ := config.Parse(func(string) string { return "" })
 	store := artwork.New(96, nil)
