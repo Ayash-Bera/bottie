@@ -35,6 +35,17 @@ ResponseError response(const std::string& wire, Response& result, size_t capacit
 }
 
 int main() {
+    const std::string guard = ",\"control_target\":\"0123456789abcdef0123456789abcdef\"}";
+    for (const std::string prefix : {"{\"action\":\"play\"", "{\"action\":\"volume\",\"value\":0", "{\"action\":\"volume\",\"value\":100", "{\"action\":\"repeat\",\"value\":\"context\""}) {
+        const auto body = prefix + guard;
+        assert(control_valid(body.data(), body.size()));
+    }
+    for (const std::string prefix : {"{\"action\":\"volume\",\"value\":-1", "{\"action\":\"volume\",\"value\":101", "{\"action\":\"volume\",\"value\":1.0", "{\"action\":\"volume\",\"value\":true", "{\"action\":\"volume\",\"value\":\"50\"", "{\"action\":\"volume\",\"value\":01", "{\"action\":\"volume\",\"value\":1e1"}) {
+        const auto body = prefix + guard;
+        assert(!control_valid(body.data(), body.size()));
+    }
+    for (const std::string body : {"{\"action\":\"volume\",\"value\":50}", "{\"action\":\"play\",\"control_target\":\"\"}", "{\"action\":\"play\",\"control_target\":\"0123456789abcdef0123456789abcdeF\"}"})
+        assert(!control_valid(body.data(), body.size()));
     Origin origin;
     assert(parse_origin("http://192.168.1.2:8787", true, origin));
     assert(origin.port == 8787 && !origin.tls);

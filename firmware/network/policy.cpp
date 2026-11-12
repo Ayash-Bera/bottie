@@ -130,8 +130,17 @@ bool token_valid(const char* token) {
 
 bool control_valid(const char* json, size_t length) {
     if (!json || !length || length > control_capacity) return false;
-    char text[96];
+    char text[128];
     if (!compact(reinterpret_cast<const uint8_t*>(json), length, text, sizeof text)) return false;
+    bool guarded = false;
+    if (char* guard = std::strstr(text, ",\"control_target\":\"")) {
+        char* value = guard + std::strlen(",\"control_target\":\"");
+        if (std::strlen(value) != 34 || value[32] != '"' || value[33] != '}') return false;
+        for (unsigned n = 0; n < 32; ++n)
+            if (!((value[n] >= '0' && value[n] <= '9') || (value[n] >= 'a' && value[n] <= 'f'))) return false;
+        guard[0] = '}'; guard[1] = 0;
+        guarded = true;
+    }
     const char* const allowed[] = {
         "{\"action\":\"play\"}", "{\"action\":\"pause\"}", "{\"action\":\"previous\"}", "{\"action\":\"next\"}",
         "{\"action\":\"shuffle\",\"value\":true}", "{\"action\":\"shuffle\",\"value\":false}",
@@ -139,6 +148,13 @@ bool control_valid(const char* json, size_t length) {
         "{\"action\":\"repeat\",\"value\":\"track\"}"
     };
     for (const char* candidate : allowed) if (!std::strcmp(text, candidate)) return true;
+    constexpr char volume[] = "{\"action\":\"volume\",\"value\":";
+    if (guarded && !std::strncmp(text, volume, sizeof volume - 1)) {
+        const char* first = text + sizeof volume - 1;
+        const char* last = text + std::strlen(text) - 1;
+        unsigned value;
+        return *last == '}' && !(last - first > 1 && *first == '0') && decimal(first, last, 100, value);
+    }
     return false;
 }
 bool control_ack(const uint8_t* data, size_t length) {

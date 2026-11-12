@@ -27,6 +27,7 @@
 extern "C" void app_main(void) {
     std::printf("BOTTIE_BOOT reset_reason=%d\n", static_cast<int>(esp_reset_reason()));
     static bottie::Model model;
+    static bottie::Interaction interaction;
 #if BOTTIE_RECOVERED_PANEL
     static bottie::RecoveredBoard board;
 #else
@@ -42,13 +43,13 @@ extern "C" void app_main(void) {
     static std::array<uint16_t, BOTTIE_FRAME_WIDTH * stored_rows> pixels;
     bottie::Frame frame{pixels.data(), pixels.size(), BOTTIE_FRAME_WIDTH, BOTTIE_FRAME_HEIGHT, BOTTIE_FRAME_WIDTH};
 #if BOTTIE_RECOVERED_PANEL
-    std::puts("Recovered panel profile: physical behavior unverified; no touch or PSRAM driver.");
+    std::puts("Cgotchi profile: documented CST810 input and PWM; PSRAM disabled.");
     if (!board.initialize()) { std::puts("Recovered panel initialization stopped"); return; }
 #else
     std::puts("Bottie headless output. No display, touch or PSRAM driver is configured.");
 #endif
 #if BOTTIE_LIVE_COMPANION
-    std::puts("Explicit live companion mode; network runs in a background task. Input is unconfigured.");
+    std::puts("Explicit live companion mode; network and touch sampling use background tasks.");
     if (!live.start()) std::puts("Companion task unavailable; continuing local animation");
 #else
     std::puts("Synthetic playback and input profile");
@@ -61,7 +62,6 @@ extern "C" void app_main(void) {
         uint64_t now = board.monotonic_ms();
 #if BOTTIE_LIVE_COMPANION
         live.consume(model);
-        bottie::InputEvent event{};
 #else
         if (now >= poll_at) {
             size_t length = 0;
@@ -71,19 +71,40 @@ extern "C" void app_main(void) {
             } else model.disconnected();
             poll_at = now + 1000;
         }
-        auto event = board.input();
 #endif
-        if (event.type == bottie::EventType::planet_tap) model.tap_planet(now);
-        if (event.type == bottie::EventType::control) {
-            bottie::Intent intent;
+        interaction.refresh(model, now);
+        auto dispatch = [&](const bottie::Intent& intent) {
 #if BOTTIE_LIVE_COMPANION
-            if (model.intent(event.button, now, intent) && !live.enqueue(intent)) model.disconnected();
+            if (!live.enqueue(intent)) std::puts("BOTTIE_CONTROL queue_rejected=1");
 #else
-            char body[64];
-            if (model.intent(event.button, now, intent) && bottie::encode_intent(intent, body, sizeof body) &&
-                !board.control(body, std::strlen(body))) model.disconnected();
+            char body[128];
+            if (bottie::encode_intent(intent, body, sizeof body) && !board.control(body, std::strlen(body))) model.disconnected();
 #endif
+        };
+        for (unsigned n = 0; n < 33; ++n) {
+#if BOTTIE_LIVE_COMPANION && !BOTTIE_RECOVERED_PANEL
+            bottie::InputEvent event{};
+#else
+            const auto event = board.input();
+#endif
+            if (event.type == bottie::EventType::none) break;
+            if (event.type == bottie::EventType::planet_tap) model.tap_planet(now);
+            if (event.type == bottie::EventType::control) {
+                bottie::Intent intent;
+                if (model.intent(event.button, now, intent)) dispatch(intent);
+            }
+            if (event.type == bottie::EventType::pointer) {
+                const auto action = interaction.update(event.pointer, model, board.monotonic_ms(), frame.width, frame.height);
+                if (action.planet) model.tap_planet(now);
+                if (action.control) dispatch(action.intent);
+#if BOTTIE_RECOVERED_PANEL
+                if (action.brightness_changed && !board.brightness(interaction.settings.brightness))
+                    std::puts("BOTTIE_BRIGHTNESS write_error=1");
+#endif
+            }
         }
+        interaction.expire(board.monotonic_ms());
+        const auto settings = interaction.settings;
         model.tick(now);
 #if BOTTIE_LIVE_COMPANION
         const bottie::Artwork* artwork = live.artwork();
@@ -111,6 +132,7 @@ extern "C" void app_main(void) {
             frame.storage_y = y;
             frame.storage_height = std::min(stored_rows, static_cast<uint16_t>(frame.height - y));
             bool rendered = bottie::render(model, now, frame, artwork);
+            if (rendered) rendered = bottie::render_settings(model, now, frame, settings);
             if (rendered && diagnose) {
                 bottie::PixelDiagnostics band;
                 band.add(frame);
@@ -139,9 +161,16 @@ extern "C" void app_main(void) {
                 bottie::playback_name(model.effective_state(now)), artwork ? 1U : 0U);
 #if BOTTIE_LIVE_COMPANION
             const auto health = live.health();
-            std::printf("BOTTIE_NETWORK status=%u polls=%u accepted=%u rejected=%u stack_free=%u poll_ms=%u\n",
+            std::printf("BOTTIE_NETWORK status=%u polls=%u accepted=%u rejected=%u stack_free=%u poll_ms=%u controls=%u control_errors=%u\n",
                 static_cast<unsigned>(health.status), static_cast<unsigned>(health.polls), static_cast<unsigned>(health.accepted),
-                static_cast<unsigned>(health.rejected), static_cast<unsigned>(health.stack_free), static_cast<unsigned>(health.poll_ms));
+                static_cast<unsigned>(health.rejected), static_cast<unsigned>(health.stack_free), static_cast<unsigned>(health.poll_ms),
+                static_cast<unsigned>(health.controls), static_cast<unsigned>(health.control_errors));
+#endif
+#if BOTTIE_RECOVERED_PANEL
+            const auto input = board.input_health();
+            std::printf("BOTTIE_TOUCH samples=%u valid=%u errors=%u overflows=%u max_gap_ms=%u max_read_us=%u brightness=%u settings=%u\n",
+                        unsigned(input.samples), unsigned(input.valid), unsigned(input.errors), unsigned(input.overflows),
+                        unsigned(input.max_gap_ms), unsigned(input.max_read_us), unsigned(settings.brightness), unsigned(settings.open));
 #endif
             report_at = now + 10000;
         }

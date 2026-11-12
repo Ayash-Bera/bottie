@@ -1,13 +1,15 @@
 #pragma once
 
 #include "bottie/core.hpp"
+#include "bottie/interaction.hpp"
 
 namespace bottie {
 
-enum class EventType { none, planet_tap, control };
+enum class EventType { none, planet_tap, control, pointer };
 struct InputEvent {
     EventType type{EventType::none};
     Button button{Button::play_pause};
+    PointerSample pointer{};
 };
 
 // A real adapter must supply verified wiring, transport and artwork ownership.

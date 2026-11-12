@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -50,7 +51,34 @@ bool RecoveredBoard::initialize() {
     if (!checked(spi_bus_add_device(SPI2_HOST, &device, &device_))) return false;
     initialized_ = recovered::initialize(*this) && level(recovered::post_init_high_pin, true);
     if (!initialized_) level(recovered::cs, true);
+    if (initialized_) {
+        ledc_timer_config_t timer{};
+        timer.speed_mode = LEDC_LOW_SPEED_MODE;
+        timer.duty_resolution = LEDC_TIMER_10_BIT;
+        timer.timer_num = LEDC_TIMER_1;
+        timer.freq_hz = 25000;
+        timer.clk_cfg = LEDC_AUTO_CLK;
+        ledc_channel_config_t channel{};
+        channel.gpio_num = recovered::post_init_high_pin;
+        channel.speed_mode = LEDC_LOW_SPEED_MODE;
+        channel.channel = LEDC_CHANNEL_0;
+        channel.timer_sel = LEDC_TIMER_1;
+        channel.duty = brightness_duty(100);
+        pwm_ready_ = checked(ledc_timer_config(&timer)) && checked(ledc_channel_config(&channel));
+        if (!pwm_ready_) level(recovered::post_init_high_pin, true);
+        if (!input_.initialize()) std::puts("BOTTIE_TOUCH unavailable");
+    }
     return initialized_;
+}
+
+InputEvent RecoveredBoard::input() {
+    InputEvent event;
+    if (input_.pop(event.pointer, monotonic_ms())) event.type = EventType::pointer;
+    return event;
+}
+bool RecoveredBoard::brightness(uint8_t percent) {
+    return pwm_ready_ && checked(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, brightness_duty(percent))) &&
+           checked(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
 }
 
 bool RecoveredBoard::reset_level(bool high) { return level(recovered::reset, high); }

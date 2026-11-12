@@ -1,4 +1,5 @@
 #include "bottie/core.hpp"
+#include "bottie/interaction.hpp"
 
 #include <array>
 #include <charconv>
@@ -15,6 +16,7 @@ bool number(const char* value, uint64_t& output) {
 
 int main(int argc, char** argv) {
     bool offline = false, control = false;
+    bottie::SettingsView settings;
     uint64_t elapsed = 0, wall = 0;
     const char* art_path = nullptr;
     const char* frame_path = nullptr;
@@ -23,6 +25,12 @@ int main(int argc, char** argv) {
     bottie::Button button{};
     for (int n = 1; n < argc; ++n) {
         if (std::strcmp(argv[n], "--offline") == 0) offline = true;
+        else if (std::strcmp(argv[n], "--settings") == 0) settings.open = true;
+        else if (std::strcmp(argv[n], "--brightness") == 0 && n + 1 < argc) {
+            uint64_t value;
+            if (!number(argv[++n], value) || value < bottie::minimum_brightness || value > 100) return 2;
+            settings.brightness = static_cast<uint8_t>(value);
+        }
         else if (std::strcmp(argv[n], "--elapsed-ms") == 0 && n + 1 < argc) { if (!number(argv[++n], elapsed)) return 2; }
         else if (std::strcmp(argv[n], "--wall-ms") == 0 && n + 1 < argc) { if (!number(argv[++n], wall)) return 2; }
         else if (std::strcmp(argv[n], "--art") == 0 && n + 1 < argc) art_path = argv[++n];
@@ -59,9 +67,10 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (offline) model.disconnected();
+    settings.volume = model.snapshot.volume_percent;
     if (control) {
         bottie::Intent intent;
-        char body[64];
+        char body[128];
         if (!model.intent(button, elapsed, intent)) { std::fputs("Control unavailable\n", stderr); return 3; }
         if (!bottie::encode_intent(intent, body, sizeof body)) return 1;
         std::puts(body);
@@ -84,6 +93,7 @@ int main(int argc, char** argv) {
     bottie::Frame frame{pixels.data(), pixels.size(), width, height, width};
     model.tick(elapsed);
     if (!bottie::render(model, elapsed, frame, art_path ? &artwork : nullptr)) return 1;
+    if (!bottie::render_settings(model, elapsed, frame, settings)) return 1;
     if (frame_path) {
         FILE* file = std::fopen(frame_path, "wb");
         if (!file) return 2;

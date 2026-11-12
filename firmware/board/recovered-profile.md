@@ -1,6 +1,6 @@
 # Recovered installed-app profile
 
-This opt-in profile uses settings traced from the installed app. Physical commissioning has shown readable text, artwork and controls in the expected orientation, with a reported blue tint. The RGB channel-order correction below still requires physical confirmation. Exact board identity, visible dimensions, power circuitry and touch hardware remain unverified.
+This opt-in profile uses settings traced from the installed app. Physical commissioning has shown readable text, artwork and controls in the expected orientation, with a reported blue tint. The RGB channel-order correction below still requires physical confirmation. The named Cgotchi profile now matches the recovered pins/init table; actual PCB revision and newly documented peripheral responses remain unmeasured.
 
 ## Evidence
 
@@ -23,7 +23,7 @@ The renderer and BTAR contract store red in bits 15..11, green in bits 10..5 and
 
 The profile now sends `MADCTL=00` instead of the captured app's `08`. The [JD9853 datasheet](https://files.waveshare.com/wiki/common/Jd9853_datasheet.pdf#page=136), page 136, defines bit 3 as the RGB/BGR selector; page 41 defines the existing RGB565 serial bit order. Clearing bit 3 preserves orientation, geometry and byte order. The original assets' encoding is unknown, so their captured selector is not a color contract for the new renderer. Native tests cover red, green, blue, white and black byte sequences. Correct physical colors still require observation after deployment.
 
-The adapter reproduces two additional levels from the active startup trace: GPIO2 low at `0x4200208a`, GPIO13 low at `0x42002098`, then GPIO13 high at `0x420022d5` after panel initialization. Both pins are configured as outputs by the preceding calls. GPIO13 stays low if initialization fails. Their physical roles remain unverified; GPIO13 may gate display visibility, but no backlight function is assumed. The adapter has no touch input, performs no controller readback and enables no PSRAM. No separate pin probing is implemented.
+The adapter reproduces two additional levels from the active startup trace: GPIO2 low at `0x4200208a`, GPIO13 low at `0x42002098`, then GPIO13 high at `0x420022d5` after panel initialization. Both pins are configured as outputs by the preceding calls. GPIO13 stays low if initialization fails. The matched source identifies GPIO2 as active-low power hold and GPIO13 as active-high backlight switching. This implementation adds documented PWM on13 and CST810 polling after panel initialization. It performs no controller readback, independent touch reset, GPIO37 access or PSRAM initialization.
 
 ## Compile and inspect
 
@@ -32,8 +32,17 @@ The adapter reproduces two additional levels from the active startup trace: GPIO
 build/firmware/native/bottie_fixture --profile recovered --frame /tmp/recovered.ppm --art protocol/fixtures/orbit-96.btar < protocol/fixtures/playing.json
 ```
 
-The compile helper selects `BOTTIE_RECOVERED_PANEL=ON`, uses a 240 by 296 internal framebuffer and validates the image. It does not access USB or flash the device. The resulting program would initialize the traced SPI/reset pins if deliberately flashed and run later. Synthetic playback remains explicit; touch and control input are disabled. The renderer fills the recovered address window rather than reproducing the old app's centered square assets.
+The compile helper selects `BOTTIE_RECOVERED_PANEL=ON`, uses a 240 by 296 internal framebuffer and validates the image. It does not access USB or flash the device. The resulting program would initialize the traced SPI/reset pins if deliberately flashed and run later. Synthetic playback remains explicit in the offline profile. Live mode connects timestamped physical touch to the input state machine and guarded network intents. The renderer fills the recovered address window rather than reproducing the old app's centered square assets.
 
-Pixel transfers use bounded eight-row chunks. Native checks verify the complete byte stream, stride handling and chip-select cleanup on failure. Those tests establish software behavior only. Physical commissioning still requires color confirmation, panel and board markings or a schematic, GPIO13/GPIO2 role verification and touch identification.
+Pixel transfers use bounded eight-row chunks. Native checks verify the complete byte stream, stride handling and chip-select cleanup on failure. Those tests establish software behavior only. Physical commissioning still requires corrected-color confirmation, touch-coordinate/gesture checks and observed brightness response.
 
 The separate live mode uses sixteen-row render storage and updates the corresponding row window. Its final eight-row band ends at row295. This saves134400 bytes of internal memory while retaining the accepted full-frame pixels; native equality and address-window checks cover the change. Bounded runtime captures measured frame timing and memory margins; visible tearing remains unmeasured.
+
+
+## Matched Cgotchi input/backlight profile
+
+Pinned [board configuration](https://github.com/ALTIO-AI-PRIVATE-LIMITED/micropixel-gotchi/blob/26f5abf9abc32a74115e4de3f216def4b31848ff/firmware/espressif/main/platform/boards/cheeko-gotchi/board_config.hpp) documents OSTB_XIAOZHI_V1.2, including shared LCD/CST810 reset17 and active-high NPN backlight13. All seven recovered GPIOs and22 ordered vendor-init entries match. [Display/touch configuration](https://github.com/ALTIO-AI-PRIVATE-LIMITED/micropixel-gotchi/blob/26f5abf9abc32a74115e4de3f216def4b31848ff/firmware/espressif/main/platform/boards/cheeko-gotchi/display_hardware.cpp) documents landscape CST810 coordinates and100 kHz polling. Inverting its MY/MV transform gives portrait `(raw_y,295-raw_x)`; the24 hidden GRAM rows are already accounted for. Per-unit calibration is still a physical check.
+
+[Backlight implementation](https://github.com/ALTIO-AI-PRIVATE-LIMITED/micropixel-gotchi/blob/26f5abf9abc32a74115e4de3f216def4b31848ff/firmware/espressif/main/platform/boards/cheeko-gotchi/board_hardware.cpp) uses LEDC25 kHz/10-bit. Our boot remains100%, slider minimum10%, with RAM-only settings. GPIO2 remainsLOW and reset17 is never toggled by the touch task. GPIO37 remains unused because the factory charge-detect assignment conflicts with S3R8 octal PSRAM DQS. No physical keys, audio or other sensors are added.
+
+The vendor uses BGR on its tested panel batch and documents flipping the selector when channels exchange. Our MADCTL00 correction and accepted geometry/byte order remain unchanged. This is not a universal BGR rule or a claim of newly observed colors.

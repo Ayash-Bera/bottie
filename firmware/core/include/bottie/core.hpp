@@ -18,11 +18,11 @@ enum class Playback { playing, paused, idle, unavailable };
 enum class Repeat { off, context, track };
 enum class Context { unknown, playlist, album };
 enum class Button { shuffle, previous, play_pause, next, repeat };
-enum class Action { play, pause, previous, next, shuffle, repeat };
+enum class Action { play, pause, previous, next, shuffle, repeat, volume };
 enum class Error { none, size, syntax, depth, tokens, field, range, version, stale };
 
 struct Capabilities {
-    bool play{}, pause{}, previous{}, next{}, shuffle{}, repeat{};
+    bool play{}, pause{}, previous{}, next{}, shuffle{}, repeat{}, volume{};
 };
 
 struct Snapshot {
@@ -37,6 +37,9 @@ struct Snapshot {
     char artwork_url[257]{};
     uint16_t artwork_width{}, artwork_height{};
     Capabilities capabilities{};
+    int16_t volume_percent{-1};
+    char control_target[33]{};
+    bool target_known{};
 };
 
 Error parse_snapshot(const char* json, size_t bytes, Snapshot& output);
@@ -47,6 +50,8 @@ struct Intent {
     Action action{Action::play};
     bool shuffle{};
     Repeat repeat{Repeat::off};
+    uint8_t volume{};
+    char control_target[33]{};
 };
 
 bool encode_intent(const Intent& intent, char* output, size_t capacity);
@@ -64,6 +69,9 @@ struct Model {
     Playback effective_state(uint64_t now_ms) const;
     uint64_t progress(uint64_t now_ms) const;
     bool intent(Button button, uint64_t now_ms, Intent& output) const;
+    bool resume_intent(uint64_t now_ms, Intent& output) const;
+    bool volume_intent(uint8_t percent, uint64_t now_ms, Intent& output) const;
+    bool allows(const Intent& intent, uint64_t now_ms) const;
     void tick(uint64_t now_ms);
     bool tap_planet(uint64_t now_ms);
 };

@@ -1,8 +1,10 @@
 #include "bottie/core.hpp"
+#include "bottie/interaction.hpp"
 
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 
 namespace bottie {
 namespace {
@@ -405,5 +407,55 @@ uint32_t frame_hash(const Frame& frame) {
         }
     }
     return hash;
+}
+
+bool render_settings(const Model& model, uint64_t now, Frame frame, const SettingsView& settings) {
+    if (!frame.valid() || frame.width < 128 || frame.height < 128 || frame.width > max_frame_width ||
+        frame.height > max_frame_height) return false;
+    if (!settings.open) return true;
+    Canvas canvas{frame};
+    Intent volume;
+    const bool has_volume = model.volume_intent(0, now, volume);
+    const auto layout = settings_layout(frame.width, frame.height, has_volume);
+    const auto panel = layout.panel;
+    canvas.rect(panel.x, panel.y, panel.width, panel.height, dim);
+    canvas.rect(panel.x + 1, panel.y + 1, panel.width - 2, panel.height - 2, background);
+    centered_text(canvas, panel.y + std::max(4, frame.height * 12 / 296), "settings", ink);
+    char label[24];
+    std::snprintf(label, sizeof label, "brightness %u", unsigned(settings.brightness));
+    const auto bar = layout.brightness;
+    const int label_gap = std::max(8, frame.height * 14 / 296);
+    centered_text(canvas, bar.y - label_gap, label, ink);
+    const int track_y = bar.y + bar.height / 2;
+    canvas.rect(bar.x, track_y - 1, bar.width, 3, dim);
+    const int value = std::clamp(int(settings.brightness), int(minimum_brightness), 100);
+    const int knob = bar.x + (value - minimum_brightness) * (bar.width - 1) / (100 - minimum_brightness);
+    canvas.rect(bar.x, track_y - 1, knob - bar.x, 3, ink);
+    canvas.circle(knob, track_y, frame.width >= 200 ? 5 : 3, ink);
+    if (has_volume) {
+        const auto slider = layout.volume;
+        if (settings.volume < 0) std::snprintf(label, sizeof label, "volume --");
+        else std::snprintf(label, sizeof label, "volume %u", unsigned(settings.volume));
+        centered_text(canvas, slider.y - label_gap, label, ink);
+        const int y = slider.y + slider.height / 2;
+        const int x = slider.x + std::clamp(int(settings.volume), 0, 100) * (slider.width - 1) / 100;
+        canvas.rect(slider.x, y - 1, slider.width, 3, dim);
+        if (settings.volume >= 0) {
+            canvas.rect(slider.x, y - 1, x - slider.x, 3, ink);
+            canvas.circle(x, y, frame.width >= 200 ? 5 : 3, ink);
+        }
+    }
+    Intent resume;
+    const bool enabled = model.resume_intent(now, resume);
+    auto button = [&](const Rect& rect, const char* name, uint16_t color) {
+        canvas.rect(rect.x, rect.y, rect.width, rect.height, color);
+        canvas.rect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2, background);
+        centered_text(canvas, rect.y + (rect.height - 7) / 2, name, color);
+    };
+    const auto state = model.effective_state(now);
+    button(layout.resume, enabled ? (state == Playback::idle ? "play" : "resume") :
+           state == Playback::playing ? "playing" : "unavailable", enabled ? ink : dim);
+    button(layout.close, "close", ink);
+    return true;
 }
 } // namespace bottie

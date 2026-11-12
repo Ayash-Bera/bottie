@@ -291,6 +291,25 @@ Error parse_snapshot(const char* json, size_t bytes, Snapshot& output) {
         !parser.boolean(parser.find(caps, "next"), cap.next) ||
         !parser.boolean(parser.find(caps, "shuffle"), cap.shuffle) ||
         !parser.boolean(parser.find(caps, "repeat"), cap.repeat)) return Error::field;
+    const size_t volume_cap = parser.find(caps, "volume");
+    if (volume_cap != parser.count && !parser.boolean(volume_cap, cap.volume)) return Error::field;
+    const size_t volume = field("volume_percent");
+    if (volume != parser.count && parser.tokens[volume].kind != Kind::null_value) {
+        uint64_t percent;
+        if (!parser.number(volume, percent) || percent > 100) return Error::range;
+        candidate.volume_percent = static_cast<int16_t>(percent);
+    }
+    const size_t target = field("control_target");
+    candidate.target_known = target != parser.count;
+    if (candidate.target_known) {
+        if (!parser.copy(target, candidate.control_target, sizeof candidate.control_target)) return Error::field;
+        const size_t length = std::strlen(candidate.control_target);
+        if (length != 0 && length != 32) return Error::field;
+        for (size_t n = 0; n < length; ++n) {
+            const char c = candidate.control_target[n];
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return Error::field;
+        }
+    }
     output = candidate;
     return Error::none;
 }
