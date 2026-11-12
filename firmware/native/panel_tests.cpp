@@ -42,10 +42,21 @@ public:
 int main() {
     RecordingTransport init;
     CHECK(bottie::recovered::initialize(init));
-    // Independent fingerprint of the captured setup command stream.
-    CHECK(init.commands.size() == 29 && init.sequence_hash == 0xb79ca1c4U);
+    // Captured setup fingerprint with only the MADCTL color selector cleared.
+    CHECK(init.commands.size() == 29 && init.sequence_hash == 0x0544cadcU);
+    CHECK(init.commands[1] == 0x36 && init.parameters[1] == std::vector<uint8_t>{0x00});
     CHECK((init.delays == std::vector<unsigned>{10,20,100,120,10}));
     CHECK((init.resets == std::vector<bool>{false,true}));
+    std::array<uint16_t, 240> primaries{};
+    constexpr uint16_t colors[] = {0xf800,0x07e0,0x001f,0xffff,0x0000};
+    constexpr uint8_t color_bytes[] = {0xf8,0x00,0x07,0xe0,0x00,0x1f,0xff,0xff,0x00,0x00};
+    for (size_t i = 0; i < primaries.size(); ++i) primaries[i] = colors[i % 5];
+    bottie::Frame primary_row{primaries.data(), primaries.size(), 240, 296, 240, 0, 1};
+    RecordingTransport primary_transfer;
+    CHECK(bottie::recovered::present(primary_transfer, primary_row));
+    CHECK(primary_transfer.bytes.size() == 480);
+    for (size_t i = 0; i < primary_transfer.bytes.size(); ++i)
+        CHECK(primary_transfer.bytes[i] == color_bytes[i % 10]);
     std::vector<uint16_t> pixels(242 * 296, 0xffff);
     for (size_t y = 0; y < 296; ++y)
         for (size_t x = 0; x < 240; ++x) pixels[y * 242 + x] = static_cast<uint16_t>((y << 8) | x);
@@ -84,5 +95,5 @@ int main() {
     RecordingTransport invalid;
     frame.capacity = 240;
     CHECK(!bottie::recovered::present(invalid, frame) && invalid.commands.empty() && !invalid.started);
-    std::puts("BOTTIE_RECOVERED_TRANSPORT_OK trace/endianness/stride/bounds/cleanup");
+    std::puts("BOTTIE_RECOVERED_TRANSPORT_OK rgb-order/trace/endianness/stride/bounds/cleanup");
 }
