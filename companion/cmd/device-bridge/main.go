@@ -13,6 +13,7 @@ import (
 
 	"bottie/companion/internal/config"
 	"bottie/companion/internal/devicebridge"
+	"bottie/companion/internal/httpserver"
 )
 
 func run() error {
@@ -35,7 +36,7 @@ func run() error {
 		}
 	})
 	log.Info("device gateway listening", "address", cfg.Bind)
-	err = srv.ListenAndServe()
+	err = httpserver.ListenAndServe(ctx, srv, log)
 	stop()
 	workers.Wait()
 	if errors.Is(err, http.ErrServerClosed) {

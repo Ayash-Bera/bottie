@@ -22,6 +22,7 @@ import (
 	"bottie/companion/internal/artwork"
 	"bottie/companion/internal/config"
 	"bottie/companion/internal/models"
+	"bottie/companion/internal/spotify"
 )
 
 type OAuth interface {
@@ -273,7 +274,13 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 	if s.oauth == nil {
 		_, _ = io.WriteString(w, "<p>Fixture mode is ready. No account is needed. Device endpoint: /v1/playback.</p>")
 	} else {
-		_, _ = io.WriteString(w, "<p>Start playback on your Spotify device, then connect here. Restarting this service clears the connection.</p><form method=post action=/auth/login><button>Connect Spotify</button></form>")
+		_, _ = io.WriteString(w, "<p>Start playback on your Spotify device, then connect here.</p>")
+		if s.cfg.TokenStore == "keyring" {
+			_, _ = io.WriteString(w, "<p>Spotify login is saved in your protected desktop wallet. Unlock that wallet after desktop login if requested. Check connection status before reconnecting.</p>")
+		} else {
+			_, _ = io.WriteString(w, "<p>Restarting this service clears the connection.</p>")
+		}
+		_, _ = io.WriteString(w, "<form method=post action=/auth/login><button>Connect Spotify</button></form>")
 	}
 	_, _ = io.WriteString(w, "</html>")
 }
@@ -283,7 +290,13 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		code, message = e.Code, e.Message
 	}
-	jsonReply(w, 200, map[string]string{"mode": s.cfg.Mode, "state": p.State, "status": code, "message": message})
+	body := map[string]any{"mode": s.cfg.Mode, "state": p.State, "status": code, "message": message}
+	if source, ok := s.oauth.(interface {
+		AuthorizationStatus() spotify.AuthorizationStatus
+	}); ok {
+		body["authorization"] = source.AuthorizationStatus()
+	}
+	jsonReply(w, 200, body)
 }
 func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	if s.oauth == nil {

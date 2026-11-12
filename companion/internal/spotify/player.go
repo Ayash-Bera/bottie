@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"bottie/companion/internal/artwork"
+	"bottie/companion/internal/credentials"
 	"bottie/companion/internal/models"
 )
 
@@ -37,31 +38,44 @@ type nameEntry struct {
 }
 
 type Player struct {
-	mu                             sync.RWMutex
-	cached                         models.Playback
-	problem                        *models.ServiceError
-	op                             chan struct{}
-	client                         *http.Client
-	art                            *artwork.Store
-	clientID, redirectURI          string
-	apiURL, tokenURL, authorizeURL string
-	now                            func() time.Time
-	pending                        flow
-	tokens                         token
-	nextAttempt                    time.Time
-	backoffCode                    string
-	failures                       int
-	names                          map[string]nameEntry
-	nudge                          chan struct{}
+	mu                                     sync.RWMutex
+	cached                                 models.Playback
+	problem                                *models.ServiceError
+	op                                     chan struct{}
+	client                                 *http.Client
+	art                                    *artwork.Store
+	clientID, redirectURI                  string
+	apiURL, tokenURL, authorizeURL         string
+	now                                    func() time.Time
+	pending                                flow
+	tokens                                 token
+	nextAttempt                            time.Time
+	backoffCode                            string
+	failures                               int
+	names                                  map[string]nameEntry
+	nudge                                  chan struct{}
+	store                                  credentials.Store
+	storeLoaded, storeDirty, deletePending bool
+	storeRetry                             time.Time
+	storeError                             *models.ServiceError
+	authorization                          AuthorizationStatus
 }
 
 func New(clientID, redirectURI string, art *artwork.Store, client *http.Client) *Player {
+	return NewWithStore(clientID, redirectURI, art, client, nil)
+}
+
+func NewWithStore(clientID, redirectURI string, art *artwork.Store, client *http.Client, store credentials.Store) *Player {
 	if client == nil {
 		client = &http.Client{Timeout: 8 * time.Second}
 	}
 	c := *client
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Player{cached: models.Empty("unavailable"), problem: loginRequired(), op: make(chan struct{}, 1), client: &c, art: art, clientID: clientID, redirectURI: redirectURI, apiURL: "https://api.spotify.com/v1", tokenURL: "https://accounts.spotify.com/api/token", authorizeURL: "https://accounts.spotify.com/authorize", now: time.Now, names: make(map[string]nameEntry), nudge: make(chan struct{}, 1)}
+	status := "memory"
+	if store != nil {
+		status = "pending"
+	}
+	return &Player{cached: models.Empty("unavailable"), problem: loginRequired(), op: make(chan struct{}, 1), client: &c, art: art, clientID: clientID, redirectURI: redirectURI, apiURL: "https://api.spotify.com/v1", tokenURL: "https://accounts.spotify.com/api/token", authorizeURL: "https://accounts.spotify.com/authorize", now: time.Now, names: make(map[string]nameEntry), nudge: make(chan struct{}, 1), store: store, authorization: AuthorizationStatus{Storage: status}}
 }
 
 func loginRequired() *models.ServiceError {
@@ -121,6 +135,11 @@ func (p *Player) Begin(ctx context.Context) (string, string, *models.ServiceErro
 		return "", "", unavailable()
 	}
 	defer p.release()
+	if p.store != nil {
+		if err := p.store.Check(ctx); err != nil {
+			return "", "", p.storageFailure(err)
+		}
+	}
 	state, err := randomString()
 	if err != nil {
 		return "", "", unavailable()
@@ -154,6 +173,7 @@ func (p *Player) Complete(ctx context.Context, state, cookie, code, providerErro
 	if code == "" || len(code) > 4096 {
 		return models.Problem("invalid_code", 400, "authorization code is missing or too long")
 	}
+	p.storeRetry = time.Time{}
 	if e := p.exchange(ctx, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {p.redirectURI}, "code_verifier": {f.verifier}}, false); e != nil {
 		p.fail(e)
 		return e
@@ -174,6 +194,8 @@ func (p *Player) deferred() *models.ServiceError {
 	e := unavailable()
 	if p.backoffCode == "rate_limited" {
 		e = models.Problem("rate_limited", 429, "Spotify rate limit reached; wait before retrying")
+	} else if p.backoffCode == "oauth_configuration" {
+		e = models.Problem("oauth_configuration", 503, "Spotify rejected refresh configuration; check the registered client ID before reconnecting")
 	}
 	e.RetryAfter = max(1, int((p.nextAttempt.Sub(p.now())+time.Second-1)/time.Second))
 	return e
@@ -245,7 +267,16 @@ func (p *Player) exchange(ctx context.Context, form url.Values, refresh bool) *m
 	}
 	if status != 200 {
 		if status == 400 || status == 401 {
-			p.tokens = token{}
+			var failure struct {
+				Error string `json:"error"`
+			}
+			_ = json.Unmarshal(b, &failure)
+			if refresh && failure.Error == "invalid_grant" {
+				return p.revoke(ctx)
+			}
+			if refresh {
+				return p.backoff("oauth_configuration", "")
+			}
 			return loginRequired()
 		}
 		return p.backoff("upstream_error", "")
@@ -263,6 +294,9 @@ func (p *Player) exchange(ctx context.Context, form url.Values, refresh bool) *m
 	if refresh && t.Refresh == "" {
 		t.Refresh = p.tokens.refresh
 	}
+	if p.store != nil && t.Refresh == "" {
+		return p.backoff("upstream_error", "")
+	}
 	read, control := false, false
 	if t.Scope != nil {
 		for _, s := range strings.Fields(*t.Scope) {
@@ -277,12 +311,18 @@ func (p *Player) exchange(ctx context.Context, form url.Values, refresh bool) *m
 		read, control = p.tokens.canRead, p.tokens.canControl
 	}
 	p.tokens = token{access: t.Access, refresh: t.Refresh, expires: p.now().Add(time.Duration(t.Expires) * time.Second), canRead: read, canControl: control}
+	p.storeLoaded = true
+	p.deletePending = false
+	p.storeDirty = p.store != nil
 	p.failures = 0
 	p.nextAttempt = time.Time{}
-	return nil
+	return p.syncCredentials(ctx)
 }
 
 func (p *Player) ensureToken(ctx context.Context) *models.ServiceError {
+	if e := p.syncCredentials(ctx); e != nil {
+		return e
+	}
 	if e := p.deferred(); e != nil {
 		return e
 	}
@@ -315,8 +355,7 @@ func (p *Player) request(ctx context.Context, method, path string) ([]byte, int,
 	case 200, 204:
 		return b, status, nil
 	case 401:
-		p.tokens = token{}
-		return nil, status, loginRequired()
+		return nil, status, p.revoke(ctx)
 	case 403:
 		return nil, status, models.Problem("restricted", 403, "playback is restricted; check Premium, app access and requested permissions")
 	case 404:

@@ -14,8 +14,10 @@ import (
 
 	"bottie/companion/internal/artwork"
 	"bottie/companion/internal/config"
+	"bottie/companion/internal/credentials"
 	"bottie/companion/internal/fixture"
 	"bottie/companion/internal/models"
+	"bottie/companion/internal/spotify"
 )
 
 func fixtureServer(t *testing.T, token string) (http.Handler, *bytes.Buffer) {
@@ -193,6 +195,35 @@ func TestOAuthFormOrigins(t *testing.T) {
 				t.Fatal("rejected origin started authorization")
 			}
 		})
+	}
+}
+
+func TestProtectedLoginStatus(t *testing.T) {
+	cfg, _ := config.Parse(func(k string) string {
+		if k == "BOTTIE_TOKEN_STORE" {
+			return "keyring"
+		}
+		return ""
+	})
+	art := artwork.New(96, nil)
+	p := spotify.NewWithStore("test-client", "http://127.0.0.1:8787/auth/callback", art, nil, credentials.NewKeyring("test-client", "http://127.0.0.1:8787/auth/callback"))
+	h := New(cfg, p, art, p, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	home := request(h, "GET", "/", "", "", "")
+	if !strings.Contains(home.Body.String(), "protected desktop wallet") || strings.Contains(home.Body.String(), "clears the connection") {
+		t.Fatal("wrong persistence instructions")
+	}
+	w := request(h, "GET", "/status", "", "", "")
+	var v struct {
+		Authorization struct {
+			Authorized bool   `json:"authorized"`
+			Storage    string `json:"storage"`
+		} `json:"authorization"`
+	}
+	if json.Unmarshal(w.Body.Bytes(), &v) != nil || v.Authorization.Authorized || v.Authorization.Storage != "pending" {
+		t.Fatal("safe status")
+	}
+	if strings.Contains(w.Body.String(), "test-client") || strings.Contains(w.Body.String(), "refresh_token") || strings.Contains(w.Body.String(), "access_token") {
+		t.Fatal("private identity in status")
 	}
 }
 

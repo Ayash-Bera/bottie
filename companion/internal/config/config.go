@@ -21,6 +21,7 @@ type Config struct {
 	ArtworkSize  int
 	PollInterval time.Duration
 	AllowedHosts map[string]bool
+	TokenStore   string
 }
 
 func Load() (Config, error) {
@@ -31,7 +32,13 @@ func Load() (Config, error) {
 }
 
 func Parse(get func(string) string) (Config, error) {
-	c := Config{Mode: get("BOTTIE_MODE"), Bind: get("BOTTIE_BIND"), DeviceToken: get("BOTTIE_DEVICE_TOKEN"), ClientID: get("SPOTIFY_CLIENT_ID"), RedirectURI: get("SPOTIFY_REDIRECT_URI"), ArtworkSize: 96, PollInterval: 3 * time.Second}
+	c := Config{Mode: get("BOTTIE_MODE"), Bind: get("BOTTIE_BIND"), DeviceToken: get("BOTTIE_DEVICE_TOKEN"), ClientID: get("SPOTIFY_CLIENT_ID"), RedirectURI: get("SPOTIFY_REDIRECT_URI"), TokenStore: get("BOTTIE_TOKEN_STORE"), ArtworkSize: 96, PollInterval: 3 * time.Second}
+	if c.TokenStore == "" {
+		c.TokenStore = "memory"
+	}
+	if c.TokenStore != "memory" && c.TokenStore != "keyring" {
+		return c, fmt.Errorf("BOTTIE_TOKEN_STORE must be memory or keyring")
+	}
 	if c.Mode == "" {
 		c.Mode = "fixture"
 	}

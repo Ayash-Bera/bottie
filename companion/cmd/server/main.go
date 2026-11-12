@@ -14,7 +14,9 @@ import (
 	"bottie/companion/internal/api"
 	"bottie/companion/internal/artwork"
 	"bottie/companion/internal/config"
+	"bottie/companion/internal/credentials"
 	"bottie/companion/internal/fixture"
+	"bottie/companion/internal/httpserver"
 	"bottie/companion/internal/models"
 	"bottie/companion/internal/spotify"
 )
@@ -37,7 +39,11 @@ func run() error {
 			return err
 		}
 	} else {
-		p := spotify.New(cfg.ClientID, cfg.RedirectURI, store, nil)
+		var tokens credentials.Store
+		if cfg.TokenStore == "keyring" {
+			tokens = credentials.NewKeyring(cfg.ClientID, cfg.RedirectURI)
+		}
+		p := spotify.NewWithStore(cfg.ClientID, cfg.RedirectURI, store, nil, tokens)
 		player = p
 		oauth = p
 		workers.Go(func() { p.Run(ctx, cfg.PollInterval) })
@@ -53,7 +59,7 @@ func run() error {
 		}
 	})
 	log.Info("companion listening", "address", cfg.Bind, "mode", cfg.Mode)
-	err = srv.ListenAndServe()
+	err = httpserver.ListenAndServe(ctx, srv, log)
 	stop()
 	workers.Wait()
 	if errors.Is(err, http.ErrServerClosed) {

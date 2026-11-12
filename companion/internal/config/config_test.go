@@ -19,6 +19,8 @@ func TestConfiguration(t *testing.T) {
 		{"size", map[string]string{"BOTTIE_ARTWORK_SIZE": "241"}, "16..240"},
 		{"poll", map[string]string{"BOTTIE_POLL_SECONDS": "0"}, "2..10"},
 		{"mode", map[string]string{"BOTTIE_MODE": "live"}, "fixture or spotify"},
+		{"keyring", map[string]string{"BOTTIE_TOKEN_STORE": "keyring"}, ""},
+		{"invalid token store", map[string]string{"BOTTIE_TOKEN_STORE": "file"}, "BOTTIE_TOKEN_STORE"},
 		{"missing client", map[string]string{"BOTTIE_MODE": "spotify"}, "SPOTIFY_CLIENT_ID"},
 		{"spotify", map[string]string{"BOTTIE_MODE": "spotify", "SPOTIFY_CLIENT_ID": strings.Repeat("a", 32)}, ""},
 		{"localhost callback", map[string]string{"BOTTIE_MODE": "spotify", "SPOTIFY_CLIENT_ID": strings.Repeat("a", 32), "SPOTIFY_REDIRECT_URI": "http://localhost:8787/auth/callback"}, "SPOTIFY_REDIRECT_URI"},
