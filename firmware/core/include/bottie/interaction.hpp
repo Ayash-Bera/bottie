@@ -63,6 +63,10 @@ private:
     char started_track_[129]{};
     char started_target_[33]{}, volume_target_[33]{};
     uint64_t volume_updated_{};
+    bool context_initialized_{}, context_fresh_{}, cutoff_set_{};
+    uint64_t discard_through_ms_{};
+    Playback context_state_{Playback::unavailable};
+    char context_target_[33]{}, context_track_[129]{};
     Hit captured_{Hit::none};
 };
 

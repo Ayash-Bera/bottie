@@ -168,6 +168,69 @@ void sliders_and_mailbox() {
     model.online = true; CHECK(!box.take(model,2400,out));
     CHECK(box.put(intent,2500)); CHECK(!box.take(model,4500,out));
 }
+void queued_context_changes() {
+    for (unsigned scenario = 0; scenario < 7; ++scenario) {
+        for (bool volume : {false, true}) {
+            auto model = playing();
+            Interaction ui; ui.settings.open = volume; ui.refresh(model, 0);
+            PointerQueue queue;
+            const unsigned y = volume ? 178 : 268;
+            for (auto p : {point(120,y,40), point(0,0,80,false), point(180,y,100), point(0,0,140,false)})
+                CHECK(queue.push(p));
+            if (scenario == 0) model.snapshot.control_target[0] = 'f';
+            if (scenario == 1) model.snapshot.control_target[0] = 0;
+            if (scenario == 2) model.disconnected();
+            if (scenario == 3) model.age_at_receive_ms = stale_after_ms;
+            if (scenario == 4) model.snapshot.state = Playback::paused;
+            if (scenario == 5) std::strcpy(model.snapshot.track_id, "new-track");
+            if (scenario == 6) model.snapshot.capabilities.volume = false;
+            ui.refresh(model, 170);
+            PointerSample sample;
+            while (queue.pop(sample,170)) CHECK(!ui.update(sample,model,170).control);
+            CHECK(!ui.update(point(0,0,170,false),model,170).control);
+            CHECK(!ui.update(point(180,y,180),model,180).control);
+            // Reauthorization, including returning to the same target, creates another cutoff.
+            model = playing(); model.received_ms = 200;
+            ui.refresh(model,210);
+            CHECK(!ui.update(point(0,0,200,false),model,210).control);
+            CHECK(!ui.update(point(120,y,220),model,220).control);
+            CHECK(!ui.update(point(0,0,240,false),model,240).control);
+            CHECK(!ui.update(point(180,y,100),model,240).control);
+            const auto down = ui.update(point(30,y,260),model,260);
+            const auto up = ui.update(point(0,0,300,false),model,300);
+            CHECK(volume ? down.control && down.intent.action == Action::volume : up.control && up.intent.action == Action::shuffle);
+        }
+    }
+    auto model = playing(); Interaction local;
+    local.settings.open = true; local.refresh(model,0);
+    CHECK(local.update(point(30,128,40),model,40).brightness_changed);
+    model.snapshot.control_target[0] = 'f'; local.refresh(model,100);
+    CHECK(local.settings.open && local.settings.brightness == minimum_brightness);
+    CHECK(!local.update(point(239,128,80),model,100).brightness_changed);
+    local.update(point(0,0,120,false),model,120);
+    CHECK(local.update(point(209,128,140),model,140).brightness_changed);
+    CHECK(local.settings.brightness == 100);
+    Interaction first;
+    Model empty; first.refresh(empty,0);
+    first.refresh(model,170);
+    CHECK(!first.update(point(120,268,40),model,170).control);
+    CHECK(!first.update(point(0,0,100,false),model,170).control);
+    CHECK(!first.update(point(120,268,180),model,180).control);
+    first.update(point(0,0,200,false),model,200);
+    first.update(point(120,268,220),model,220);
+    CHECK(first.update(point(0,0,280,false),model,280).control);
+    Interaction expires; model = playing(); expires.refresh(model,0);
+    expires.refresh(model,stale_after_ms);
+    CHECK(!expires.update(point(120,268,stale_after_ms-100),model,stale_after_ms).control);
+    CHECK(!expires.update(point(0,0,stale_after_ms-40,false),model,stale_after_ms).control);
+    model.received_ms = stale_after_ms + 20;
+    expires.refresh(model,stale_after_ms+40);
+    CHECK(!expires.update(point(0,0,stale_after_ms+20,false),model,stale_after_ms+40).control);
+    CHECK(!expires.update(point(120,268,stale_after_ms+60),model,stale_after_ms+60).control);
+    expires.update(point(0,0,stale_after_ms+80,false),model,stale_after_ms+80);
+    expires.update(point(120,268,stale_after_ms+100),model,stale_after_ms+100);
+    CHECK(expires.update(point(0,0,stale_after_ms+140,false),model,stale_after_ms+140).control);
+}
 void protocol() {
     const std::string base = R"({"schema_version":1,"state":"playing","track_id":"x","title":"t","artist":"a","album":"b","progress_ms":0,"duration_ms":1000,"updated_at_ms":1,"shuffle":false,"repeat":"off","capabilities":{"play":true,"pause":true,"previous":true,"next":true,"shuffle":true,"repeat":true,"volume":true},"control_target":"0123456789abcdef0123456789abcdef","volume_percent":)";
     for (const char* value : {"null","0","100"}) {
@@ -218,6 +281,6 @@ void render_checks() {
 }
 }
 int main() {
-    reports_and_queue(); gestures(); sliders_and_mailbox(); protocol(); render_checks();
+    reports_and_queue(); gestures(); sliders_and_mailbox(); queued_context_changes(); protocol(); render_checks();
     std::puts("BOTTIE_INPUT_OK raw mapping, timed queue, gestures, stale cancel, sliders, target guards and overlay bands");
 }

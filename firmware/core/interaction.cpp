@@ -76,6 +76,22 @@ void Interaction::expire(uint64_t now) {
 void Interaction::refresh(const Model& model, uint64_t now) {
     Intent volume;
     const bool available = model.volume_intent(0, now, volume);
+    const auto state = model.effective_state(now);
+    const bool fresh = state != Playback::unavailable && model.snapshot.control_target[0];
+    const bool context_changed = context_fresh_ != fresh || context_state_ != state ||
+        settings.volume_available != available ||
+        std::strcmp(context_target_, model.snapshot.control_target) != 0 ||
+        std::strcmp(context_track_, model.snapshot.track_id) != 0;
+    if (context_initialized_ && context_changed) {
+        cancel();
+        cutoff_set_ = true;
+        discard_through_ms_ = now;
+    }
+    context_initialized_ = true;
+    context_fresh_ = fresh;
+    context_state_ = state;
+    std::memcpy(context_target_, model.snapshot.control_target, sizeof context_target_);
+    std::memcpy(context_track_, model.snapshot.track_id, sizeof context_track_);
     const bool changed = std::strcmp(volume_target_, model.snapshot.control_target) != 0;
     settings.volume_available = available;
     if ((!available || changed) && captured_ == Hit::volume) cancel();
@@ -88,6 +104,8 @@ void Interaction::refresh(const Model& model, uint64_t now) {
 
 UiAction Interaction::update(const PointerSample& sample, const Model& model, uint64_t now, uint16_t width, uint16_t height) {
     UiAction result;
+    // A pre-refresh release must not rearm another queued press for the new target.
+    if (cutoff_set_ && sample.at_ms <= discard_through_ms_) return result;
     if (sample.cancel || sample.at_ms < last_sample_ms_ || sample.at_ms > now || now - sample.at_ms > 300) {
         cancel(); return result;
     }

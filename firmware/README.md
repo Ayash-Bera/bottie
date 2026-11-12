@@ -82,6 +82,8 @@ Short taps act once on release. Playing icons map left to right to shuffle, prev
 
 CST810 uses address 0x15, SDA12/SCL11, 100 kHz and register0x02. Valid raw bounds are x0..295/y0..239; portrait coordinates are `(raw_y, 295-raw_x)`. A dedicated task samples every nominal20 ms with a driver wait of at least one tick (10 ms here). A32-report timestamped queue preserves press/release edges across long frames. Overflow, a200 ms input gap or obsolete queued input cancels the gesture until release. No separate reset, IRQ scan or GPIO37 access occurs. `touch_device.hpp` and `PointerQueue` are the actual native fake-bus/queue seams.
 
+A target, freshness, playback-state, track or volume-layout change discards every report sampled through that frame boundary. A later valid release must precede a new press. This prevents queued input from being reassigned to a new player or a changed control layout, including an old release followed by another old press.
+
 GPIO13 uses active-high25 kHz/10-bit LEDC on the documented switch. Boot remains100%; UI range10..100%. Settings are RAM-only and reset at boot; no NVS or partition change. Power-holdGPIO2 staysLOW. Shared LCD/touch reset17 is used only by existing panel startup. Physical keys, audio, motion and charge sensing remain untouched.
 
 For simulated overlay exports add `--settings --brightness 50` to `bottie_fixture`; a capable guarded snapshot also shows volume. `bottie_input_tests` covers raw bounds/corners, a60 ms tap entirely inside a170 ms render interval, long-press suppression, stale release, target invalidation, coalescing and full/band overlay equality.
