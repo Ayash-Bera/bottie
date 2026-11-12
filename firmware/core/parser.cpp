@@ -1,4 +1,5 @@
 #include "bottie/core.hpp"
+#include "bottie/text_mask.hpp"
 
 #include <cstring>
 #include <limits>
@@ -282,6 +283,16 @@ Error parse_snapshot(const char* json, size_t bytes, Snapshot& output) {
             (candidate.artwork_url[0] && (width < 16 || height < 16))) return Error::range;
         candidate.artwork_width = static_cast<uint16_t>(width);
         candidate.artwork_height = static_cast<uint16_t>(height);
+    }
+    const size_t mask = field("text_mask");
+    if (mask != parser.count && parser.tokens[mask].kind == Kind::object) {
+        uint64_t layout = 0;
+        char path[74]{};
+        if (parser.number(parser.find(mask, "layout"), layout) && layout == 1 &&
+            parser.copy(parser.find(mask, "url"), path, sizeof path) && text_mask_path(path)) {
+            std::strcpy(candidate.text_mask_url, path);
+            candidate.text_mask_layout = 1;
+        }
     }
     size_t caps = field("capabilities");
     auto& cap = candidate.capabilities;

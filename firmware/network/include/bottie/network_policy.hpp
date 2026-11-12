@@ -15,6 +15,17 @@ bool token_valid(const char* token);
 bool control_valid(const char* json, size_t length);
 bool control_ack(const uint8_t* data, size_t length);
 bool artwork_valid(const uint8_t* data, size_t length, uint16_t width, uint16_t height, Artwork& view);
+bool text_digest_valid(const char* path, const uint8_t* data, size_t length);
+
+enum class Asset { none, text, artwork };
+struct AssetSchedule {
+    bool previous_text{};
+    Asset choose(bool text_ready, bool art_ready) {
+        if (text_ready && (!art_ready || !previous_text)) { previous_text = true; return Asset::text; }
+        if (art_ready) { previous_text = false; return Asset::artwork; }
+        return Asset::none;
+    }
+};
 
 struct Backoff {
     uint64_t until{};

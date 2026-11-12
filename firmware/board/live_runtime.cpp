@@ -39,9 +39,9 @@ void LiveRuntime::entry(void* self) {
     vTaskDelete(nullptr);
 }
 
-void LiveRuntime::publish(bool online, const Snapshot* snapshot, const Artwork* art, uint64_t observed_ms) {
+void LiveRuntime::publish(bool online, const Snapshot* snapshot, const Artwork* art, uint64_t observed_ms, const TextMask* mask) {
     if (xSemaphoreTake(mutex_, pdMS_TO_TICKS(20)) != pdTRUE) return;
-    if (online && snapshot) shared_.capture(*snapshot, observed_ms, art);
+    if (online && snapshot) shared_.capture(*snapshot, observed_ms, art, mask);
     else shared_.offline();
     ++published_;
     xSemaphoreGive(mutex_);
@@ -63,7 +63,8 @@ void LiveRuntime::work() {
             Snapshot snapshot;
             if (parse_snapshot(body_.data(), length, snapshot) == Error::none &&
                 worker_model_.apply_snapshot(snapshot, observed) == Error::none) {
-                publish(true, &snapshot, client_.artwork(), observed);
+                const auto mask = client_.text_mask(snapshot);
+                publish(true, &snapshot, client_.artwork(), observed, &mask);
                 accepted = true;
             }
             else publish(false);
@@ -115,6 +116,7 @@ const Artwork* LiveRuntime::artwork() {
     displayed_view_ = displayed_.artwork();
     return displayed_view_.pixels ? &displayed_view_ : nullptr;
 }
+TextMask LiveRuntime::text_mask() const { return displayed_.text_mask(); }
 
 RuntimeHealth LiveRuntime::health() const {
     return {status_.load(), polls_.load(), accepted_.load(), rejected_.load(), stack_free_.load(), poll_ms_.load(), sent_.load(), control_errors_.load()};

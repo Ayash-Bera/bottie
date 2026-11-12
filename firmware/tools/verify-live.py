@@ -9,7 +9,7 @@ panel = sys.argv[2] == "ON"
 config = json.loads((build / "config/sdkconfig.json").read_text())
 commands = json.loads((build / "compile_commands.json").read_text())
 files = {pathlib.Path(command["file"]).name for command in commands}
-required = {"headless.cpp", "live_runtime.cpp", "client.cpp", "policy.cpp"}
+required = {"headless.cpp", "live_runtime.cpp", "client.cpp", "policy.cpp", "text_mask.cpp", "text_digest.cpp"}
 if not required.issubset(files) or "smoke.c" in files or (("recovered_spi.cpp" in files) != panel):
     raise SystemExit("Incorrect live source selection")
 if config["ESP_MAIN_TASK_STACK_SIZE"] != 8192 or config.get("SPIRAM", False) or not config.get("BOTTIE_NETWORK_ENABLED"):

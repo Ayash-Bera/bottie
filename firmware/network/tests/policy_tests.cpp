@@ -136,5 +136,14 @@ int main() {
     assert(!artwork_valid(image.data(), image.size(), 97, 96, art));
     image[0] = 'X';
     assert(!artwork_valid(image.data(), image.size(), 96, 96, art));
+    const std::string binary_header = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n";
+    assert(response(binary_header + "Content-Length: 8494\r\n\r\n" + std::string(8494, char(0)),
+                    result, text_mask_capacity, Media::artwork) == ResponseError::none && result.length == 8494);
+    assert(response(binary_header + "Content-Length: 8495\r\n\r\n",
+                    result, text_mask_capacity, Media::artwork) == ResponseError::size);
+    assert(response(binary_header + "Transfer-Encoding: chunked\r\n\r\n212e\r\n" + std::string(8494, char(0)) + "\r\n0\r\n\r\n",
+                    result, text_mask_capacity, Media::artwork) == ResponseError::none && result.length == 8494);
+    assert(response(binary_header + "Transfer-Encoding: chunked\r\n\r\n212f\r\n",
+                    result, text_mask_capacity, Media::artwork) == ResponseError::size);
     std::cout << "BOTTIE_NETWORK_NATIVE_OK\n";
 }

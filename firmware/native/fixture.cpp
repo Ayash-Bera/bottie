@@ -1,5 +1,6 @@
 #include "bottie/core.hpp"
 #include "bottie/interaction.hpp"
+#include "bottie/network_policy.hpp"
 
 #include <array>
 #include <charconv>
@@ -19,6 +20,7 @@ int main(int argc, char** argv) {
     bottie::SettingsView settings;
     uint64_t elapsed = 0, wall = 0;
     const char* art_path = nullptr;
+    const char* text_path = nullptr;
     const char* frame_path = nullptr;
     uint64_t seed = 0x74b39ac1U;
     uint16_t width = 128, height = 128;
@@ -33,6 +35,7 @@ int main(int argc, char** argv) {
         }
         else if (std::strcmp(argv[n], "--elapsed-ms") == 0 && n + 1 < argc) { if (!number(argv[++n], elapsed)) return 2; }
         else if (std::strcmp(argv[n], "--wall-ms") == 0 && n + 1 < argc) { if (!number(argv[++n], wall)) return 2; }
+        else if (std::strcmp(argv[n], "--text") == 0 && n + 1 < argc) text_path = argv[++n];
         else if (std::strcmp(argv[n], "--art") == 0 && n + 1 < argc) art_path = argv[++n];
         else if (std::strcmp(argv[n], "--frame") == 0 && n + 1 < argc) frame_path = argv[++n];
         else if (std::strcmp(argv[n], "--profile") == 0 && n + 1 < argc) {
@@ -52,7 +55,7 @@ int main(int argc, char** argv) {
             if (!found) return 2;
             control = true;
         } else {
-            std::fputs("Usage: bottie_fixture [--control BUTTON] [--elapsed-ms N] [--wall-ms N] [--offline] [--art FILE] [--frame FILE.ppm] [--seed N] [--profile recovered] < playback.json\n", stderr);
+            std::fputs("Usage: bottie_fixture [--control BUTTON] [--elapsed-ms N] [--wall-ms N] [--offline] [--art FILE] [--text FILE] [--frame FILE.ppm] [--seed N] [--profile recovered] < playback.json\n", stderr);
             return 2;
         }
     }
@@ -89,10 +92,26 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    std::array<uint8_t, bottie::text_mask_capacity + 1> text_bytes{};
+    bottie::TextCache text_cache;
+    text_cache.observe(model.snapshot);
+    if (text_path) {
+        FILE* file = std::fopen(text_path, "rb");
+        if (!file) return 2;
+        const size_t size = std::fread(text_bytes.data(), 1, text_bytes.size(), file);
+        const bool read_ok = !std::ferror(file);
+        std::fclose(file);
+        if (!read_ok || !bottie::network::policy::text_digest_valid(model.snapshot.text_mask_url, text_bytes.data(), size)) {
+            std::fputs("Text mask digest rejected\n", stderr); return 1;
+        }
+        std::memcpy(text_cache.storage(), text_bytes.data(), size);
+        if (!text_cache.commit(model.snapshot, size)) { std::fputs("Text mask rejected\n", stderr); return 1; }
+    }
+    const auto text_mask = text_cache.view(model.snapshot);
     std::array<uint16_t, bottie::max_frame_width * bottie::max_frame_height> pixels{};
     bottie::Frame frame{pixels.data(), pixels.size(), width, height, width};
     model.tick(elapsed);
-    if (!bottie::render(model, elapsed, frame, art_path ? &artwork : nullptr)) return 1;
+    if (!bottie::render(model, elapsed, frame, art_path ? &artwork : nullptr, &text_mask)) return 1;
     if (!bottie::render_settings(model, elapsed, frame, settings)) return 1;
     if (frame_path) {
         FILE* file = std::fopen(frame_path, "wb");

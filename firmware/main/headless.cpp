@@ -1,4 +1,5 @@
 #include "bottie/core.hpp"
+#include "bottie/text_mask.hpp"
 #include "frame_diagnostics.hpp"
 #include "simulated.hpp"
 #if BOTTIE_LIVE_COMPANION
@@ -108,8 +109,10 @@ extern "C" void app_main(void) {
         model.tick(now);
 #if BOTTIE_LIVE_COMPANION
         const bottie::Artwork* artwork = live.artwork();
+        const auto text_mask = live.text_mask();
 #else
         const bottie::Artwork* artwork = nullptr;
+        const bottie::TextMask text_mask{};
 #endif
         const bool playing = model.effective_state(now) == bottie::Playback::playing;
         const bool diagnose = (!playing && !diagnosed_idle) || (playing && artwork && !diagnosed_playing);
@@ -131,7 +134,7 @@ extern "C" void app_main(void) {
         for (uint16_t y = 0; y < frame.height; y += stored_rows) {
             frame.storage_y = y;
             frame.storage_height = std::min(stored_rows, static_cast<uint16_t>(frame.height - y));
-            bool rendered = bottie::render(model, now, frame, artwork);
+            bool rendered = bottie::render(model, now, frame, artwork, &text_mask);
             if (rendered) rendered = bottie::render_settings(model, now, frame, settings);
             if (rendered && diagnose) {
                 bottie::PixelDiagnostics band;
@@ -153,12 +156,13 @@ extern "C" void app_main(void) {
         max_frame_us = std::max(max_frame_us, static_cast<uint64_t>(esp_timer_get_time()) - started_us);
         if (now >= report_at) {
             constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-            std::printf("BOTTIE_HEALTH uptime_ms=%llu frames=%llu frame_errors=%llu max_frame_us=%llu heap=%u min_heap=%u largest=%u main_stack_free=%u state=%s art=%u\n",
+            std::printf("BOTTIE_HEALTH uptime_ms=%llu frames=%llu frame_errors=%llu max_frame_us=%llu heap=%u min_heap=%u largest=%u main_stack_free=%u state=%s art=%u text_flags=%u text_bytes=%u\n",
                 static_cast<unsigned long long>(now), static_cast<unsigned long long>(frame_count),
                 static_cast<unsigned long long>(frame_errors), static_cast<unsigned long long>(max_frame_us),
                 static_cast<unsigned>(heap_caps_get_free_size(caps)), static_cast<unsigned>(heap_caps_get_minimum_free_size(caps)),
                 static_cast<unsigned>(heap_caps_get_largest_free_block(caps)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
-                bottie::playback_name(model.effective_state(now)), artwork ? 1U : 0U);
+                bottie::playback_name(model.effective_state(now)), artwork ? 1U : 0U,
+                static_cast<unsigned>(text_mask.flags), static_cast<unsigned>(text_mask.length));
 #if BOTTIE_LIVE_COMPANION
             const auto health = live.health();
             std::printf("BOTTIE_NETWORK status=%u polls=%u accepted=%u rejected=%u stack_free=%u poll_ms=%u controls=%u control_errors=%u\n",

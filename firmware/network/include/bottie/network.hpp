@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bottie/core.hpp"
+#include "bottie/text_mask.hpp"
 #include <atomic>
 
 namespace bottie::network {
@@ -37,6 +38,7 @@ public:
     bool playback(char* output, size_t capacity, size_t& length);
     bool control(const char* json, size_t length);
     const Artwork* artwork() const;
+    TextMask text_mask(const Snapshot& snapshot) const;
     Status status() const;
 private:
     struct Impl;

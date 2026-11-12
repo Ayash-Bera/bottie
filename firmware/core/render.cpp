@@ -1,4 +1,5 @@
 #include "bottie/core.hpp"
+#include "bottie/text_mask.hpp"
 #include "bottie/interaction.hpp"
 
 #include <algorithm>
@@ -347,7 +348,7 @@ void controls(Canvas& canvas, const Model& model, uint64_t now, uint16_t accent)
 }
 } // namespace
 
-bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* artwork) {
+bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* artwork, const TextMask* text_mask) {
     if (!frame.valid() || frame.width < 128 || frame.height < 128 || frame.width > max_frame_width ||
         frame.height > max_frame_height) return false;
     Canvas canvas{frame};
@@ -359,16 +360,38 @@ bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* art
         const Artwork* active_art = snapshot.artwork_url[0] ? artwork : nullptr;
         Color tint = artwork_color(active_art);
         uint16_t accent = color565(tint);
+        const bool shaped = text_mask && text_mask->bytes && frame.width == 240 && frame.height == 296;
+        const uint8_t required = shaped ? required_text_planes(snapshot) : 0;
+        auto masked = [&](unsigned index, uint16_t color) {
+            if (!shaped || !(text_mask->flags & (1 << index)) || !text_mask->planes[index] ||
+                !(required & (1 << index))) return false;
+            const auto box = text_boxes[index];
+            const auto plane = text_mask->planes[index];
+            for (int y = std::max(int(box.y), canvas.top()); y < std::min(int(box.y + box.height), canvas.bottom()); ++y) {
+                for (unsigned x = 0; x < box.width; ++x) {
+                    const uint8_t packed = plane[size_t(y - box.y) * (box.width / 2) + x / 2];
+                    const unsigned alpha = (x & 1) ? (packed & 15) : (packed >> 4);
+                    if (!alpha) continue;
+                    const unsigned inverse = 15 - alpha;
+                    const auto blend = [&](unsigned shift, unsigned mask) {
+                        return ((((color >> shift) & mask) * alpha + ((background >> shift) & mask) * inverse + 7) / 15) << shift;
+                    };
+                    canvas.pixel(box.x + x, y, static_cast<uint16_t>(blend(11,31) | blend(5,63) | blend(0,31)));
+                }
+            }
+            return true;
+        };
+        auto fallback = [](const char* value) { return requires_text_mask(value) ? "..." : value; };
         bool playlist = snapshot.context_type == Context::playlist && snapshot.context_name[0];
-        text(canvas, 7 * scale, 6 * scale, playlist ? snapshot.context_name : snapshot.album, frame.width - 7 * scale, accent, 1, true);
-        if (playlist) text(canvas, 12 * scale, 12 * scale, snapshot.album, frame.width - 7 * scale, dim, 1, true);
+        if (!masked(0, accent)) text(canvas, 7 * scale, 6 * scale, fallback(playlist ? snapshot.context_name : snapshot.album), frame.width - 7 * scale, accent, 1, true);
+        if (playlist && !masked(1, dim)) text(canvas, 12 * scale, 12 * scale, fallback(snapshot.album), frame.width - 7 * scale, dim, 1, true);
         int side = std::min(frame.width * 128/240, frame.height * 128/296);
         if (side <= 0) return false;
         int left = frame.width*22/240, top = frame.height*50/296;
         record(canvas,left+side*35/32,top+side/2,side*7/16,tint,now_ms);
         cover(canvas,left,top,side,active_art);
-        centered_text(canvas,frame.height*194/296,snapshot.title,ink,scale);
-        centered_text(canvas,frame.height*216/296,snapshot.artist,dim);
+        if (!masked(2, ink)) centered_text(canvas,frame.height*194/296,fallback(snapshot.title),ink,scale);
+        if (!masked(3, dim)) centered_text(canvas,frame.height*216/296,fallback(snapshot.artist),dim);
         int progress_y = frame.height*234/296, progress_width = frame.width-20*scale;
         canvas.rect(10*scale,progress_y,progress_width,1,dim);
         if (snapshot.duration_ms) {

@@ -114,7 +114,9 @@ struct Client::Impl {
     std::atomic<uint32_t> associated_at{0};
     unsigned starts{}, associations{}, disconnects{}, addresses{}, attempts{}, timeouts{};
     uint64_t attempt_until{};
-    policy::Backoff wifi_backoff, http_backoff, art_backoff;
+    policy::Backoff wifi_backoff, http_backoff, art_backoff, text_backoff;
+    policy::AssetSchedule assets;
+    TextCache text;
     uint8_t art_bytes[artwork_capacity]{};
     char art_url[257]{};
     Artwork art;
@@ -146,6 +148,7 @@ struct Client::Impl {
         }
     }
     void clear_art() { art = {}; art_url[0] = 0; }
+    void clear_assets() { clear_art(); text.clear(); }
     bool link() {
         uint64_t now = clock_ms();
         if (connected.load()) { attempting = false; wifi_backoff.clear(); return true; }
@@ -178,6 +181,7 @@ Client::~Client() { stop(); }
 void Client::cancel() { cancelled_.store(true); }
 Status Client::status() const { return status_; }
 const Artwork* Client::artwork() const { return impl_ && impl_->art.pixels ? &impl_->art : nullptr; }
+TextMask Client::text_mask(const Snapshot& snapshot) const { return impl_ ? impl_->text.view(snapshot) : TextMask{}; }
 bool Client::start() { return start(local_config()); }
 
 bool Client::start(const Config& config) {
@@ -286,9 +290,9 @@ bool Client::playback(char* output, size_t capacity, size_t& length) {
     if (output && capacity) output[0] = 0;
     if (!impl_) return false;
     auto& state = *impl_;
-    if (cancelled_.load()) { state.clear_art(); status_ = Status::cancelled; return false; }
+    if (cancelled_.load()) { state.clear_assets(); status_ = Status::cancelled; return false; }
     if (!output || capacity < 2) { status_ = Status::invalid_response; return false; }
-    if (!state.link()) { state.clear_art(); status_ = Status::offline; return false; }
+    if (!state.link()) { state.clear_assets(); status_ = Status::offline; return false; }
     if (!state.http_backoff.ready(clock_ms())) { status_ = Status::backoff; return false; }
     policy::Response response;
     auto error = request(state.origin, state.certificate, state.token, "/v1/playback", nullptr, 0,
@@ -296,7 +300,7 @@ bool Client::playback(char* output, size_t capacity, size_t& length) {
     Snapshot snapshot;
     if (error != policy::ResponseError::none || parse_snapshot(output, response.length, snapshot) != Error::none) {
         output[0] = 0;
-        state.clear_art();
+        state.clear_assets();
         state.http_backoff.fail(clock_ms(), response.retry_seconds);
         status_ = response_status(error, response, cancelled_.load());
         return false;
@@ -311,8 +315,25 @@ bool Client::playback(char* output, size_t capacity, size_t& length) {
         std::strcpy(state.art_url, snapshot.artwork_url);
         state.art_backoff.clear();
     }
-    if (snapshot.state == Playback::unavailable || !snapshot.artwork_url[0]) state.clear_art();
-    else if (!state.art.pixels && state.art_backoff.ready(clock_ms())) {
+    if (state.text.observe(snapshot)) state.text_backoff.clear();
+    if (snapshot.state == Playback::unavailable) state.clear_assets();
+    if (!snapshot.artwork_url[0]) state.clear_art();
+    const bool text_ready = snapshot.state != Playback::unavailable && snapshot.text_mask_layout == 1 &&
+        text_mask_path(snapshot.text_mask_url) && required_text_planes(snapshot) &&
+        !state.text.view(snapshot).bytes && state.text_backoff.ready(clock_ms());
+    const bool art_ready = snapshot.state != Playback::unavailable && snapshot.artwork_url[0] &&
+        !state.art.pixels && state.art_backoff.ready(clock_ms());
+    const auto asset = state.assets.choose(text_ready, art_ready);
+    if (asset == policy::Asset::text) {
+        policy::Response mask_response;
+        uint8_t* storage = state.text.storage();
+        const auto mask_error = request(state.origin, state.certificate, state.token, snapshot.text_mask_url, nullptr, 0,
+                                       policy::Media::artwork, storage, text_mask_capacity, mask_response, cancelled_);
+        if (mask_error == policy::ResponseError::none &&
+            policy::text_digest_valid(snapshot.text_mask_url, storage, mask_response.length) &&
+            state.text.commit(snapshot, mask_response.length)) state.text_backoff.clear();
+        else state.text_backoff.fail(clock_ms(), mask_response.retry_seconds);
+    } else if (asset == policy::Asset::artwork) {
         char path[257];
         if (snapshot.artwork_width <= 96 && snapshot.artwork_height <= 96 &&
             policy::artwork_path(state.origin, snapshot.artwork_url, path, sizeof path)) {
@@ -324,7 +345,7 @@ bool Client::playback(char* output, size_t capacity, size_t& length) {
             else { state.art = {}; state.art_backoff.fail(clock_ms(), image_response.retry_seconds); }
         }
     }
-    if (cancelled_.load()) { length = 0; output[0] = 0; state.clear_art(); status_ = Status::cancelled; return false; }
+    if (cancelled_.load()) { length = 0; output[0] = 0; state.clear_assets(); status_ = Status::cancelled; return false; }
     status_ = Status::ready;
     return true;
 }
@@ -334,14 +355,14 @@ bool Client::control(const char* json, size_t length) {
     auto& state = *impl_;
     if (cancelled_.load()) { status_ = Status::cancelled; return false; }
     if (!policy::control_valid(json, length)) { status_ = Status::invalid_response; return false; }
-    if (!state.link()) { state.clear_art(); status_ = Status::offline; return false; }
+    if (!state.link()) { state.clear_assets(); status_ = Status::offline; return false; }
     if (!state.http_backoff.ready(clock_ms())) { status_ = Status::backoff; return false; }
     uint8_t body[control_capacity];
     policy::Response response;
     auto error = request(state.origin, state.certificate, state.token, "/v1/control", json, length, policy::Media::json,
                          body, sizeof body, response, cancelled_);
     if (cancelled_.load() || error != policy::ResponseError::none || !policy::control_ack(body, response.length)) {
-        state.clear_art();
+        state.clear_assets();
         state.http_backoff.fail(clock_ms(), response.retry_seconds);
         status_ = response_status(error, response, cancelled_.load());
         return false;

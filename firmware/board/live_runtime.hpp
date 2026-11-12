@@ -23,12 +23,14 @@ public:
     void consume(Model& model);
     bool enqueue(const Intent& intent);
     const Artwork* artwork();
+    TextMask text_mask() const;
     RuntimeHealth health() const;
 private:
     static constexpr size_t stack_bytes = 24 * 1024;
     static void entry(void* self);
     void work();
-    void publish(bool online, const Snapshot* snapshot = nullptr, const Artwork* art = nullptr, uint64_t observed_ms = 0);
+    void publish(bool online, const Snapshot* snapshot = nullptr, const Artwork* art = nullptr,
+                 uint64_t observed_ms = 0, const TextMask* mask = nullptr);
     network::Client client_;
     CachedPlayback shared_, displayed_;
     Artwork displayed_view_;

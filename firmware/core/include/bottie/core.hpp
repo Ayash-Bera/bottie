@@ -40,6 +40,8 @@ struct Snapshot {
     int16_t volume_percent{-1};
     char control_target[33]{};
     bool target_known{};
+    char text_mask_url[74]{};
+    uint8_t text_mask_layout{};
 };
 
 Error parse_snapshot(const char* json, size_t bytes, Snapshot& output);
@@ -97,7 +99,9 @@ struct Frame {
     }
 };
 
-bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* artwork = nullptr);
+struct TextMask;
+bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* artwork = nullptr,
+            const TextMask* text_mask = nullptr);
 uint32_t frame_hash(const Frame& frame);
 
 } // namespace bottie
