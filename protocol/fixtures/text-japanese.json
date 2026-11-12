@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "state": "playing",
+  "track_id": "fixture-text-japanese",
+  "title": "夜に駆ける",
+  "artist": "カタカナ・ひらがな",
+  "album": "音楽（ライブ）",
+  "context": {
+    "type": "playlist",
+    "name": "パーティー"
+  },
+  "progress_ms": 60000,
+  "duration_ms": 240000,
+  "updated_at_ms": 1700000000000,
+  "shuffle": false,
+  "repeat": "off",
+  "artwork": {
+    "url": "/v1/artwork/orbit-96",
+    "width": 96,
+    "height": 96
+  },
+  "capabilities": {
+    "play": false,
+    "pause": false,
+    "previous": false,
+    "next": false,
+    "shuffle": false,
+    "repeat": false,
+    "volume": false
+  },
+  "volume_percent": null,
+  "control_target": "",
+  "text_mask": {
+    "url": "/v1/text/b5a9693e63540719a5c99e953bae7957d5f34a5738b393db1496550697aba929",
+    "layout": 1
+  }
+}

@@ -18,6 +18,7 @@ import (
 
 	"bottie/companion/internal/config"
 	"bottie/companion/internal/models"
+	"bottie/companion/internal/textmask"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -32,10 +33,15 @@ type bridge struct {
 	client *http.Client
 	log    *slog.Logger
 	slots  chan struct{}
+	masks  *textmask.Store
 }
 
 func New(cfg config.Bridge, log *slog.Logger) http.Handler {
 	return newBridge(cfg, log, newTransport())
+}
+
+func NewWithMasks(cfg config.Bridge, log *slog.Logger, masks *textmask.Store) http.Handler {
+	return bridgeWithMasks(cfg, log, newTransport(), masks)
 }
 
 func newTransport() *http.Transport {
@@ -49,7 +55,11 @@ func newTransport() *http.Transport {
 }
 
 func newBridge(cfg config.Bridge, log *slog.Logger, transport http.RoundTripper) http.Handler {
-	b := &bridge{cfg: cfg, log: log, slots: make(chan struct{}, 8), client: &http.Client{
+	return bridgeWithMasks(cfg, log, transport, nil)
+}
+
+func bridgeWithMasks(cfg config.Bridge, log *slog.Logger, transport http.RoundTripper, masks *textmask.Store) http.Handler {
+	b := &bridge{cfg: cfg, log: log, masks: masks, slots: make(chan struct{}, 8), client: &http.Client{
 		Transport: transport,
 		Timeout:   8 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -61,6 +71,7 @@ func newBridge(cfg config.Bridge, log *slog.Logger, transport http.RoundTripper)
 	r.Get("/v1/playback", b.forward)
 	r.Post("/v1/control", b.forward)
 	r.Get("/v1/artwork/{id}", b.forward)
+	r.Get("/v1/text/{id}", b.text)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		problem(w, 404, "not_found", "device endpoint not found")
 	})
@@ -68,6 +79,25 @@ func newBridge(cfg config.Bridge, log *slog.Logger, transport http.RoundTripper)
 		problem(w, 405, "method_not_allowed", "method is not supported")
 	})
 	return r
+}
+
+func (b *bridge) text(w http.ResponseWriter, r *http.Request) {
+	if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+		problem(w, 400, "invalid_body", "GET requests must have no body")
+		return
+	}
+	if b.masks == nil {
+		problem(w, 404, "not_found", "text bundle is not cached")
+		return
+	}
+	data, ok := b.masks.Get(r.URL.Path)
+	if !ok {
+		problem(w, 404, "not_found", "text bundle is not cached")
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
 }
 
 func problem(w http.ResponseWriter, status int, code, message string) {
@@ -251,7 +281,16 @@ func (b *bridge) forward(w http.ResponseWriter, r *http.Request) {
 			if p.Artwork.URL != "" && (!artworkPath(p.Artwork.URL) || p.Artwork.Width > 96 || p.Artwork.Height > 96) {
 				valid = false
 			}
-			data, err = json.Marshal(p.Bounded())
+			p = p.Bounded()
+			// Only this gateway may advertise its locally generated bundles.
+			p.TextMask = nil
+			if valid && b.masks != nil {
+				p.TextMask, err = b.masks.Prepare(r.Context(), p)
+				if err != nil {
+					b.log.Warn("metadata text render unavailable")
+				}
+			}
+			data, err = json.Marshal(p)
 		} else {
 			var result struct {
 				OK bool `json:"ok"`

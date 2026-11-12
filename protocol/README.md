@@ -10,6 +10,8 @@ The companion owns account access, metadata, controls and artwork conversion. Th
 
 The fixture starts paused on track `fixture-orbit`, at zero progress. Explicit controls and an injected clock make tests deterministic. A running server advances playing progress with its monotonic clock. `X-Bottie-Status` provides a non-secret diagnostic code. It is `ok` on success; failures use not_authorized, rate_limited, no_device, restricted or upstream_error. Backoff adds `Retry-After` in seconds. An unavailable snapshot keeps the last observation timestamp and disables controls; callers must not interpret an HTTP 200 as proof of fresh upstream playback.
 
+An optional `text_mask` descriptor from the narrow gateway provides [bounded Bengali/Japanese metadata masks](text-mask.md). The original name strings are unchanged. Older clients ignore this additive field. Native punctuation and ASCII names retain the existing pixel font; translated menus are outside this extension.
+
 ## Controls
 
 `POST /v1/control` accepts `application/json`, maximum 1024 bytes, one object only, no unknown fields:

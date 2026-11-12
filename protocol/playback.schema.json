@@ -17,6 +17,7 @@
     "artwork":{"type":"object","required":["url","width","height"],"additionalProperties":false,"properties":{"url":{"type":"string","maxLength":256},"width":{"type":"integer","minimum":0,"maximum":240},"height":{"type":"integer","minimum":0,"maximum":240}}},
     "volume_percent":{"type":["integer","null"],"minimum":0,"maximum":100},
     "control_target":{"type":"string","pattern":"^(|[0-9a-f]{32})$"},
+    "text_mask":{"type":"object","required":["url","layout"],"additionalProperties":false,"properties":{"url":{"type":"string","pattern":"^/v1/text/[0-9a-f]{64}$"},"layout":{"const":1}}},
     "capabilities":{"type":"object","required":["play","pause","previous","next","shuffle","repeat"],"additionalProperties":false,"properties":{"play":{"type":"boolean"},"pause":{"type":"boolean"},"previous":{"type":"boolean"},"next":{"type":"boolean"},"shuffle":{"type":"boolean"},"repeat":{"type":"boolean"},"volume":{"type":"boolean"}}}
   },
   "$defs":{"text":{"type":"string","maxLength":256}}

@@ -21,6 +21,17 @@ go build ./...
 go vet ./...
 ```
 
+Language-mask tests additionally exercise pinned local font coverage, Bengali conjunct boundaries, NFC-equivalent Bengali/Japanese strings, ZWNJ preservation, mixed-script lowercase, safe ellipsis, fixed ink bounds, cache expiry/identity, response hashes and gateway authentication. Run affected races with `go test -race ./internal/textmask ./internal/devicebridge`. These checks use synthetic names and local fake upstreams, with no Spotify login or controls.
+
+Generate deterministic names-only fixtures with installed pinned fonts:
+
+```fish
+cd companion
+go run ./cmd/text-fixtures /tmp/bottie-text-fixtures
+```
+
+The five JSON/BTXT pairs cover Bengali, Japanese, mixed Latin text, album-only fallback and long labels. Shared copies live under `protocol/fixtures/text-*`. The exact deployed pre-language parser must accept these additive JSON snapshots before gateway activation. Native rendering and full-band equality establish software output only; physical language readability requires the actual panel after an independently validated configured image. See the exact [binary layout and font provenance](../protocol/text-mask.md).
+
 Firmware target compilation is a separate gate, from the repository root:
 
 ```fish

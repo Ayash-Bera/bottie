@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "state": "playing",
+  "track_id": "fixture-text-album-only",
+  "title": "কৌতূহল",
+  "artist": "চাঁদের আলো",
+  "album": "夜に駆ける",
+  "context": {
+    "type": "album",
+    "name": "夜に駆ける"
+  },
+  "progress_ms": 60000,
+  "duration_ms": 240000,
+  "updated_at_ms": 1700000000000,
+  "shuffle": false,
+  "repeat": "off",
+  "artwork": {
+    "url": "/v1/artwork/orbit-96",
+    "width": 96,
+    "height": 96
+  },
+  "capabilities": {
+    "play": false,
+    "pause": false,
+    "previous": false,
+    "next": false,
+    "shuffle": false,
+    "repeat": false,
+    "volume": false
+  },
+  "volume_percent": null,
+  "control_target": "",
+  "text_mask": {
+    "url": "/v1/text/aae51462ebe4616f1305e8e40916c9f0311816da64729ad7f59aa1eae5b18286",
+    "layout": 1
+  }
+}

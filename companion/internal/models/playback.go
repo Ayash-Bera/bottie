@@ -22,6 +22,11 @@ type Artwork struct {
 	Height int    `json:"height"`
 }
 
+type TextMask struct {
+	URL    string `json:"url"`
+	Layout int    `json:"layout"`
+}
+
 type Capabilities struct {
 	Play     bool `json:"play"`
 	Pause    bool `json:"pause"`
@@ -69,6 +74,7 @@ type Playback struct {
 	Capabilities  Capabilities `json:"capabilities"`
 	VolumePercent *int         `json:"volume_percent"`
 	ControlTarget string       `json:"control_target"`
+	TextMask      *TextMask    `json:"text_mask,omitempty"`
 }
 
 func Empty(state string) Playback {
@@ -122,6 +128,7 @@ func (p Playback) Bounded() Playback {
 		p.Capabilities = Capabilities{}
 		p.VolumePercent = nil
 		p.ControlTarget = ""
+		p.TextMask = nil
 	}
 	if p.VolumePercent != nil {
 		value := *p.VolumePercent

@@ -10,8 +10,9 @@ import (
 )
 
 type Bridge struct {
-	Bind  string
-	Token string
+	Bind      string
+	Token     string
+	TextMasks bool
 }
 
 func LoadBridge() (Bridge, error) { return ParseBridge(os.Getenv) }
@@ -19,6 +20,13 @@ func LoadBridge() (Bridge, error) { return ParseBridge(os.Getenv) }
 func ParseBridge(get func(string) string) (Bridge, error) {
 	c := Bridge{Bind: get("BOTTIE_BRIDGE_BIND")}
 	path := get("BOTTIE_BRIDGE_TOKEN_FILE")
+	switch get("BOTTIE_BRIDGE_TEXT_MASKS") {
+	case "true":
+		c.TextMasks = true
+	case "", "false":
+	default:
+		return Bridge{}, fmt.Errorf("BOTTIE_BRIDGE_TEXT_MASKS must be true or false")
+	}
 	if c.Bind == "" {
 		c.Bind = "127.0.0.1:8788"
 	}

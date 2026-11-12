@@ -56,7 +56,7 @@ func TestBridgeConfiguration(t *testing.T) {
 			if err != nil && strings.Contains(err.Error(), tt.token) {
 				t.Fatal("token leaked in error")
 			}
-			if len(calls) != 2 || calls["BOTTIE_BRIDGE_BIND"] != 1 || calls["BOTTIE_BRIDGE_TOKEN_FILE"] != 1 {
+			if len(calls) != 3 || calls["BOTTIE_BRIDGE_BIND"] != 1 || calls["BOTTIE_BRIDGE_TOKEN_FILE"] != 1 || calls["BOTTIE_BRIDGE_TEXT_MASKS"] != 1 {
 				t.Fatal(calls)
 			}
 		})
@@ -85,5 +85,27 @@ func TestBridgeTokenFileBoundaries(t *testing.T) {
 				t.Fatal("accepted invalid token file")
 			}
 		})
+	}
+}
+
+func TestBridgeTextModeConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte(strings.Repeat("t", 32)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"", "false", "true", "1", "TRUE"} {
+		cfg, err := ParseBridge(func(k string) string {
+			if k == "BOTTIE_BRIDGE_TOKEN_FILE" {
+				return path
+			}
+			if k == "BOTTIE_BRIDGE_TEXT_MASKS" {
+				return value
+			}
+			return ""
+		})
+		valid := value == "" || value == "false" || value == "true"
+		if valid && (err != nil || cfg.TextMasks != (value == "true")) || !valid && err == nil {
+			t.Fatalf("mode %q: %v", value, err)
+		}
 	}
 }

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "state": "playing",
+  "track_id": "fixture-text-long",
+  "title": "ক্ষিতিজ শ্রদ্ধা কৃষ্ণ চাঁদের আলো কৌতূহল ক্ষিতিজ শ্রদ্ধা",
+  "artist": "東京交響楽団 カタカナ・ひらがな パーティー 音楽",
+  "album": "চাঁদের আলো কৌতূহল শ্রদ্ধা কৃষ্ণ ক্ষিতিজ চাঁদের আলো",
+  "context": {
+    "type": "playlist",
+    "name": "夜に駆ける 東京交響楽団 カタカナ・ひらがな パーティー"
+  },
+  "progress_ms": 60000,
+  "duration_ms": 240000,
+  "updated_at_ms": 1700000000000,
+  "shuffle": false,
+  "repeat": "off",
+  "artwork": {
+    "url": "/v1/artwork/orbit-96",
+    "width": 96,
+    "height": 96
+  },
+  "capabilities": {
+    "play": false,
+    "pause": false,
+    "previous": false,
+    "next": false,
+    "shuffle": false,
+    "repeat": false,
+    "volume": false
+  },
+  "volume_percent": null,
+  "control_target": "",
+  "text_mask": {
+    "url": "/v1/text/70bf59c41cd3913c4c05bbc2c19ad947e58ed9484168d9753d228d343a01b384",
+    "layout": 1
+  }
+}

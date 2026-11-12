@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "state": "playing",
+  "track_id": "fixture-text-mixed",
+  "title": "東京 / ORBIT 2026",
+  "artist": "বাংলা ARTIST",
+  "album": "日本語 ALBUM",
+  "context": {
+    "type": "playlist",
+    "name": "বাংলা PLAYLIST"
+  },
+  "progress_ms": 60000,
+  "duration_ms": 240000,
+  "updated_at_ms": 1700000000000,
+  "shuffle": false,
+  "repeat": "off",
+  "artwork": {
+    "url": "/v1/artwork/orbit-96",
+    "width": 96,
+    "height": 96
+  },
+  "capabilities": {
+    "play": false,
+    "pause": false,
+    "previous": false,
+    "next": false,
+    "shuffle": false,
+    "repeat": false,
+    "volume": false
+  },
+  "volume_percent": null,
+  "control_target": "",
+  "text_mask": {
+    "url": "/v1/text/0f9a80e1d8fa89a0b72140b32bbe17beef8513c48a01f9a7031d4573f145436a",
+    "layout": 1
+  }
+}

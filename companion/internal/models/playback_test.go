@@ -77,3 +77,25 @@ func TestVolumeAndTargetValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestOriginalMetadataUTF8RoundTrip(t *testing.T) {
+	for _, value := range []string{"ক্ষিতিজ শ্রদ্ধা ক্‌ষ ক্‍ষ", "夜に駆ける が が", "বাংলা ORBIT 東京", "কো কো"} {
+		p := Playback{State: "playing", Title: value, Artist: value, Album: value, Context: Context{Type: "playlist", Name: value}}.Bounded()
+		data, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded Playback
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.Title != value || decoded.Artist != value || decoded.Album != value || decoded.Context.Name != value {
+			t.Fatal("original Unicode metadata changed")
+		}
+	}
+	// The producer preserves codepoints; shaping must handle a possibly incomplete final cluster.
+	clipped := Text(strings.Repeat("a", 253)+"ক্ষ", 256)
+	if !utf8.ValidString(clipped) || len(clipped) != 256 || !strings.HasSuffix(clipped, "ক") {
+		t.Fatal("producer UTF-8 boundary changed")
+	}
+}
