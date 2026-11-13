@@ -38,7 +38,7 @@ private:
     uint64_t due_{}, last_write_{};
     uint32_t sequence_{};
     SaveStatus status_{SaveStatus::defaults};
-    bool writable_{true}, dirty_{}, released_{}, busy_{}, wrote_{};
+    bool writable_{true}, dirty_{}, released_{}, busy_{}, wrote_{}, committed_{};
 };
 class PreferenceBackend {
 public:

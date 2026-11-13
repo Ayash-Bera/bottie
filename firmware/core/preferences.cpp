@@ -39,6 +39,7 @@ uint32_t dim_timeout_ms(uint8_t mode) {
 void PreferenceState::loaded(StoreResult result, const uint8_t* bytes, size_t size) {
     *this = {};
     if (result == StoreResult::ok) result = decode_preferences(bytes,size,value_);
+    committed_ = result == StoreResult::ok;
     saved_ = value_;
     writable_ = result == StoreResult::ok || result == StoreResult::missing || result == StoreResult::corrupt;
     status_ = result == StoreResult::ok ? SaveStatus::saved : result == StoreResult::missing ? SaveStatus::defaults :
@@ -47,7 +48,7 @@ void PreferenceState::loaded(StoreResult result, const uint8_t* bytes, size_t si
 void PreferenceState::change(Preferences value) {
     if (!value.valid() || value == value_) return;
     value_ = value; ++sequence_;
-    dirty_ = busy_ || !(value_ == saved_);
+    dirty_ = busy_ || !committed_ || !(value_ == saved_);
     released_ = false;
     status_ = !writable_ ? SaveStatus::read_only : dirty_ ? SaveStatus::pending : SaveStatus::saved;
 }
@@ -65,8 +66,8 @@ bool PreferenceState::take(uint64_t now, PreferenceWrite& write) {
 void PreferenceState::complete(const PreferenceWrite& write, StoreResult result) {
     if (!busy_ || write.sequence != inflight_.sequence || !(write.value == inflight_.value)) return;
     busy_ = false;
-    if (result == StoreResult::ok) saved_ = write.value;
-    dirty_ = !(value_ == saved_);
+    if (result == StoreResult::ok) { saved_ = write.value; committed_ = true; }
+    dirty_ = !committed_ || !(value_ == saved_);
     if (write.sequence == sequence_) status_ = result == StoreResult::ok ? SaveStatus::saved : SaveStatus::unsaved;
     else status_ = dirty_ ? SaveStatus::pending : SaveStatus::saved;
     // A failed write gets another attempt only after a new deliberate release.

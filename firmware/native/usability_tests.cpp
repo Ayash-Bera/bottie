@@ -76,6 +76,30 @@ void storage() {
         }
     }
 }
+void uncommitted_defaults() {
+    for (auto initial : {StoreResult::missing,StoreResult::corrupt}) {
+        PreferenceState state; PreferenceWrite write;
+        state.loaded(initial);
+        state.release(0);
+        CHECK(!state.take(10000,write) && state.status()!=SaveStatus::saved);
+        state.change({50,2}); state.change({100,2}); state.release(100);
+        CHECK(state.status()==SaveStatus::pending && !state.take(599,write) && state.take(600,write));
+        CHECK((write.value==Preferences{100,2}));
+        state.complete(write,StoreResult::write_error);
+        CHECK(state.status()==SaveStatus::unsaved && !state.take(10000,write));
+        state.release(10000); CHECK(state.take(10500,write));
+        state.complete(write,StoreResult::ok); CHECK(state.status()==SaveStatus::saved);
+        state.change({50,2}); state.change({100,2}); state.release(12000);
+        CHECK(state.status()==SaveStatus::saved && !state.take(12500,write));
+
+        state.loaded(initial); state.change({50,2}); state.release(100); CHECK(state.take(600,write));
+        state.change({100,2}); state.release(650);
+        state.complete(write,StoreResult::write_error);
+        CHECK(state.status()==SaveStatus::pending && !state.take(2599,write) && state.take(2600,write));
+        CHECK((write.value==Preferences{100,2}));
+        state.complete(write,StoreResult::ok); CHECK(state.status()==SaveStatus::saved);
+    }
+}
 Model playing(uint64_t received = 0) {
     Model model; model.received = model.online = true; model.received_ms = received;
     model.snapshot.state = Playback::playing; model.snapshot.duration_ms = 100000;
@@ -303,6 +327,6 @@ void queued_track_and_geometry() {
 }
 }
 int main() {
-    storage(); power_and_wake(); release_and_cadence(); optional_parser_bounds(); seek_and_feedback();
+    storage(); uncommitted_defaults(); power_and_wake(); release_and_cadence(); optional_parser_bounds(); seek_and_feedback();
     detail_and_dirty(); queued_track_and_geometry(); std::puts("BOTTIE_USABILITY_NATIVE_OK");
 }
