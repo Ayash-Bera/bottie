@@ -16,6 +16,8 @@ public:
     uint32_t stack_free() const { return stack_free_; }
     uint32_t writes() const { return writes_; }
     uint32_t errors() const { return errors_; }
+    uint32_t last_write_us() const { return last_write_us_; }
+    uint32_t max_write_us() const { return max_write_us_; }
     int32_t heap_delta() const { return heap_delta_; }
     int32_t sdk_result() const { return sdk_result_; }
 private:
@@ -33,6 +35,7 @@ private:
     bool busy_{}, complete_{};
     std::atomic<uint32_t> stack_free_{};
     std::atomic<uint32_t> writes_{},errors_{};
+    std::atomic<uint32_t> last_write_us_{},max_write_us_{};
     std::atomic<int32_t> sdk_result_{};
     int32_t heap_delta_{};
 };

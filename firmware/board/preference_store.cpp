@@ -4,6 +4,8 @@
 #include "nvs_flash.h"
 #include "esp_partition.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
+#include <algorithm>
 
 namespace bottie {
 namespace {
@@ -84,7 +86,10 @@ void PreferenceStore::entry(void* self) {
         xSemaphoreTake(store.mutex_,portMAX_DELAY);
         const auto value = store.pending_.value;
         xSemaphoreGive(store.mutex_);
+        const auto started=esp_timer_get_time();
         const auto result = store.write(value);
+        store.last_write_us_=static_cast<uint32_t>(std::min<int64_t>(UINT32_MAX,esp_timer_get_time()-started));
+        store.max_write_us_=std::max(store.max_write_us_.load(),store.last_write_us_.load());
         ++store.writes_; if(result!=StoreResult::ok) ++store.errors_;
         xSemaphoreTake(store.mutex_,portMAX_DELAY);
         store.result_ = result; store.complete_ = true;

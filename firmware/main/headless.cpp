@@ -231,10 +231,11 @@ extern "C" void app_main(void) {
             std::printf("BOTTIE_TOUCH samples=%u valid=%u errors=%u overflows=%u max_gap_ms=%u max_read_us=%u brightness=%u settings=%u\n",
                         unsigned(input.samples), unsigned(input.valid), unsigned(input.errors), unsigned(input.overflows),
                         unsigned(input.max_gap_ms), unsigned(input.max_read_us), unsigned(settings.brightness), unsigned(settings.open));
-            std::printf("BOTTIE_PREFS preferred=%u applied=%u dim=%u save=%u stack_free=%u writes=%u errors=%u init_heap=%d sdk=%d\n",
+            std::printf("BOTTIE_PREFS preferred=%u applied=%u dim=%u dim_mode=%u save=%u stack_free=%u writes=%u errors=%u last_write_us=%u max_write_us=%u init_heap=%d sdk=%d\n",
                 unsigned(settings.brightness),unsigned(interaction.applied_brightness()),unsigned(interaction.dimmed()),
-                unsigned(preferences.status()),unsigned(preference_store.stack_free()),unsigned(preference_store.writes()),
-                unsigned(preference_store.errors()),int(preference_store.heap_delta()),int(preference_store.sdk_result()));
+                unsigned(settings.dim_mode),unsigned(preferences.status()),unsigned(preference_store.stack_free()),unsigned(preference_store.writes()),
+                unsigned(preference_store.errors()),unsigned(preference_store.last_write_us()),unsigned(preference_store.max_write_us()),
+                int(preference_store.heap_delta()),int(preference_store.sdk_result()));
 #endif
             std::printf("BOTTIE_REDRAW bands=%llu pixel_bytes=%llu render_us=%llu present_us=%llu input_samples=%u max_input_age_ms=%u clock_minute=%d\n",
                 static_cast<unsigned long long>(bands),static_cast<unsigned long long>(pixel_bytes),
