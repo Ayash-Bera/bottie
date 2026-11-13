@@ -9,7 +9,10 @@ panel = sys.argv[2] == "ON"
 config = json.loads((build / "config/sdkconfig.json").read_text())
 commands = json.loads((build / "compile_commands.json").read_text())
 files = {pathlib.Path(command["file"]).name for command in commands}
-required = {"headless.cpp", "live_runtime.cpp", "client.cpp", "policy.cpp", "text_mask.cpp", "text_digest.cpp"}
+required = {"headless.cpp", "live_runtime.cpp", "client.cpp", "policy.cpp", "text_mask.cpp", "text_digest.cpp",
+            "preferences.cpp", "detail.cpp", "feedback.cpp"}
+if panel:
+    required.add("preference_store.cpp")
 if not required.issubset(files) or "smoke.c" in files or (("recovered_spi.cpp" in files) != panel):
     raise SystemExit("Incorrect live source selection")
 if config["ESP_MAIN_TASK_STACK_SIZE"] != 8192 or config.get("SPIRAM", False) or not config.get("BOTTIE_NETWORK_ENABLED"):
@@ -29,9 +32,14 @@ if int(pixels[1], 16) != 7680:
 if int(runtime[1], 16) < 24576 + 2 * 18432 + 8193:
     raise SystemExit("Live runtime static buffers missing")
 print(f"Static buffers: row_band={int(pixels[1], 16)}bytes live_runtime={int(runtime[1], 16)}bytes")
+if panel:
+    preferences = next(entry for entry in entries if len(entry) == 4 and entry[3] == "app_main::preference_store")
+    if int(preferences[1], 16) < 3072:
+        raise SystemExit("Preference task static stack missing")
+    print(f"Preferences: static_store={int(preferences[1], 16)}bytes including3072byte task stack; NVS heap/write peak unmeasured")
 for region in report["layout"]:
     if region["name"] in ("DIRAM", "DRAM", "IRAM"):
         print(f"{region['name']}: linked_used={region['used']} unallocated={region['free']} total={region['total']}")
 print("Tasks: main8192bytes runtime allocation, companion24576bytes static allocation; PSRAM disabled")
-print("Linked totals exclude future Wi-Fi/TLS heap allocations; runtime minimum heap and stack margins unmeasured")
+print("Linked totals exclude future Wi-Fi/TLS, lazy10384byte detail buffer and NVS heap allocations; runtime minimum heap and stack margins unmeasured")
 print("BOTTIE_LIVE_PROFILE_OK compile only, no connection or hardware verification")

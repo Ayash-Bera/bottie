@@ -1,6 +1,9 @@
 #include "bottie/core.hpp"
 #include "bottie/text_mask.hpp"
+#include "bottie/detail.hpp"
+#include "bottie/feedback.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 
@@ -9,7 +12,7 @@ namespace {
 enum class Kind { object, array, string, number, boolean, null_value };
 struct Token {
     Kind kind{};
-    size_t start{}, length{}, next{};
+    uint16_t start{}, length{}, next{};
 };
 
 int hex(char c) {
@@ -103,6 +106,8 @@ struct Parser {
     const char* data;
     size_t length, pos{}, count{};
     std::array<Token, 256> tokens{};
+    size_t limit{256};
+    bool saw_details{}, skip_details{};
     Error error{Error::syntax};
 
     void space() {
@@ -132,7 +137,7 @@ struct Parser {
         space();
         if (pos == length) return false;
         if (depth > 8) { error = Error::depth; return false; }
-        if (count == tokens.size()) { error = Error::tokens; return false; }
+        if (count == limit) { error = Error::tokens; return false; }
         size_t index = count++;
         Token& token = tokens[index];
         token.start = pos;
@@ -145,13 +150,16 @@ struct Parser {
             char close = object ? '}' : ']';
             if (!take(close)) {
                 do {
+                    bool optional_details = false;
                     if (object) {
-                        if (count == tokens.size()) { error = Error::tokens; return false; }
+                        if (count == limit) { error = Error::tokens; return false; }
                         size_t key = count++;
                         if (!string(tokens[key])) return false;
                         tokens[key].next = count;
                         char key_text[65];
                         if (!copy(key, key_text, sizeof key_text)) return false;
+                        optional_details = depth == 0 && !std::strcmp(key_text,"details");
+                        saw_details |= optional_details;
                         for (size_t old = index + 1; old < key; old = tokens[old + 1].next) {
                             char previous[65];
                             if (!copy(old, previous, sizeof previous) || std::strcmp(previous, key_text) == 0) return false;
@@ -159,7 +167,26 @@ struct Parser {
                         space();
                         if (!take(':')) return false;
                     }
-                    if (!value(depth + 1)) return false;
+                    const size_t saved_pos=pos, saved_count=count, saved_limit=limit;
+                    if(optional_details && skip_details) {
+                        if(!ignore_value(depth+1)) return false;
+                        --count;
+                        space(); if(take(close)) break;
+                        if(!take(',')) return false;
+                        space(); continue;
+                    }
+                    if(optional_details) limit=std::min(limit,count+80);
+                    const bool parsed=value(depth+1);
+                    limit=saved_limit;
+                    if(!parsed) {
+                        if(!optional_details || error!=Error::tokens) return false;
+                        pos=saved_pos; count=saved_count; error=Error::syntax;
+                        if(!ignore_value(depth+1)) return false;
+                        if(count<tokens.size()) {
+                            tokens[count]={Kind::null_value,0,0,static_cast<uint16_t>(count+1)};
+                            ++count;
+                        } else --count;
+                    }
                     space();
                     if (take(close)) break;
                     if (!take(',')) return false;
@@ -196,6 +223,45 @@ struct Parser {
             token.length = pos - token.start;
         }
         token.next = count;
+        return true;
+    }
+    bool ignore_value(unsigned depth) {
+        space();
+        if(pos==length || depth>8) return false;
+        Token token;
+        if(data[pos]=='"') return string(token);
+        if(data[pos]=='{' || data[pos]=='[') {
+            const bool object=data[pos++]=='{'; const char close=object?'}':']';
+            space(); if(take(close)) return true;
+            for(;;) {
+                if(object) { if(!string(token)) return false; space(); if(!take(':')) return false; }
+                if(!ignore_value(depth+1)) return false;
+                space(); if(take(close)) return true;
+                if(!take(',')) return false;
+                space();
+            }
+        }
+        const char c=data[pos];
+        if(c=='t'||c=='f'||c=='n') {
+            const char* literal=c=='t'?"true":c=='f'?"false":"null";
+            const auto size=std::strlen(literal);
+            if(length-pos<size || std::memcmp(data+pos,literal,size)) return false;
+            pos+=size; return true;
+        }
+        take('-');
+        if(!take('0')) {
+            if(pos==length || data[pos]<'1' || data[pos]>'9') return false;
+            while(pos<length && data[pos]>='0' && data[pos]<='9') ++pos;
+        }
+        if(take('.')) {
+            const auto begin=pos; while(pos<length && data[pos]>='0'&&data[pos]<='9') ++pos;
+            if(pos==begin) return false;
+        }
+        if(take('e')||take('E')) {
+            if(!take('+')) take('-');
+            const auto begin=pos; while(pos<length && data[pos]>='0'&&data[pos]<='9') ++pos;
+            if(pos==begin) return false;
+        }
         return true;
     }
     size_t find(size_t object, const char* key) const {
@@ -257,12 +323,45 @@ bool choice(const Parser& parser, size_t index, const char* const (&names)[N], T
     }
     return false;
 }
+bool digest(const Parser& parser,size_t index,Digest& output) {
+    char text[65]{}; return parser.copy(index,text,sizeof text) && parse_digest(text,output);
+}
+bool details(const Parser& parser,size_t index,DetailDescriptor& output) {
+    if(index>=parser.count || parser.tokens[index].kind!=Kind::object) return false;
+    uint64_t layout;
+    if(!parser.number(parser.find(index,"layout"),layout) || layout!=1 ||
+       !digest(parser,parser.find(index,"id"),output.identity)) return false;
+    constexpr const char* names[]{"title","artist","album","context"};
+    for(unsigned n=0;n<4;++n) {
+        const auto field=parser.find(index,names[n]);
+        if(field==parser.count) continue;
+        const auto pages=parser.find(field,"pages"); uint64_t flags;
+        if(pages==parser.count || parser.tokens[pages].kind!=Kind::array ||
+           !parser.number(parser.find(field,"flags"),flags) || flags>3) return false;
+        auto& value=output.fields[n]; value.flags=static_cast<uint8_t>(flags);
+        for(size_t item=pages+1;item<parser.tokens[pages].next;item=parser.tokens[item].next) {
+            if(value.count==4 || !digest(parser,item,value.pages[value.count])) return false;
+            ++value.count;
+        }
+        if(!value.count && flags) return false;
+    }
+    output.valid=true; return true;
+}
+bool guard(const Parser& parser,size_t index,char* output) {
+    if(!parser.copy(index,output,33) || std::strlen(output)!=32) return false;
+    for(unsigned n=0;n<32;++n) if(!((output[n]>='0'&&output[n]<='9')||(output[n]>='a'&&output[n]<='f'))) return false;
+    return true;
+}
 } // namespace
 
 Error parse_snapshot(const char* json, size_t bytes, Snapshot& output) {
     if (!json || bytes == 0 || bytes > max_json_bytes) return Error::size;
     Parser parser{json, bytes};
-    if (!parser.value(0)) return parser.error;
+    if (!parser.value(0)) {
+        if(parser.error!=Error::tokens || !parser.saw_details) return parser.error;
+        parser.pos=parser.count=0; parser.limit=parser.tokens.size(); parser.error=Error::syntax; parser.skip_details=true;
+        if(!parser.value(0)) return parser.error;
+    }
     parser.space();
     if (parser.pos != bytes || parser.tokens[0].kind != Kind::object) return Error::syntax;
     Snapshot candidate;
@@ -317,6 +416,10 @@ Error parse_snapshot(const char* json, size_t bytes, Snapshot& output) {
             parser.offset(parser.find(clock, "utc_offset_min"), value.utc_offset_min) && value.valid())
             candidate.clock = value;
     }
+    if(!details(parser,field("details"),candidate.details)) candidate.details={};
+    const char* const reasons[]={"unknown","login_required","no_active_player","restricted","rate_limited",
+        "upstream_unavailable","wallet_locked","wallet_unavailable","stale"};
+    choice(parser,field("offline_reason"),reasons,candidate.offline_reason);
     size_t caps = field("capabilities");
     auto& cap = candidate.capabilities;
     if (!parser.boolean(parser.find(caps, "play"), cap.play) ||
@@ -326,6 +429,8 @@ Error parse_snapshot(const char* json, size_t bytes, Snapshot& output) {
         !parser.boolean(parser.find(caps, "shuffle"), cap.shuffle) ||
         !parser.boolean(parser.find(caps, "repeat"), cap.repeat)) return Error::field;
     const size_t volume_cap = parser.find(caps, "volume");
+    parser.boolean(parser.find(caps,"seek"),cap.seek);
+    if(!guard(parser,field("control_track"),candidate.control_track)) candidate.control_track[0]=0;
     if (volume_cap != parser.count && !parser.boolean(volume_cap, cap.volume)) return Error::field;
     const size_t volume = field("volume_percent");
     if (volume != parser.count && parser.tokens[volume].kind != Kind::null_value) {
@@ -361,6 +466,34 @@ const char* error_name(Error error) {
     case Error::stale: return "stale";
     }
     return "unknown";
+}
+
+bool parse_control_reply(const uint8_t* bytes,size_t length,unsigned status,ControlReply& reply) {
+    reply={};
+    if(!bytes || !length || length>1024) return false;
+    Parser parser{reinterpret_cast<const char*>(bytes),length};
+    if(!parser.value(0)) return false;
+    parser.space();
+    if(parser.pos!=length || parser.tokens[0].kind!=Kind::object) return false;
+    if(status==200) {
+        bool ok=false;
+        if(!parser.boolean(parser.find(0,"ok"),ok) || !ok) return false;
+        const auto result=parser.find(0,"result");
+        char text[16]{};
+        if(result!=parser.count && (!parser.copy(result,text,sizeof text) || std::strcmp(text,"accepted"))) return false;
+        const auto position=parser.find(0,"position_ms");
+        uint64_t value;
+        if(position!=parser.count) {
+            if(!parser.number(position,value) || value>=86400000) return false;
+            reply.has_position=true; reply.position_ms=static_cast<uint32_t>(value);
+        }
+        reply.phase=FeedbackPhase::sent; return true;
+    }
+    const auto error=parser.find(0,"error");
+    const char* const codes[]={"none","target_changed","track_changed","unsupported","not_authorized",
+        "keyring_locked","keyring_unavailable","rate_limited","upstream_error"};
+    if(!choice(parser,parser.find(error,"code"),codes,reply.error) || reply.error==ControlError::none) return false;
+    reply.phase=FeedbackPhase::failed; return true;
 }
 
 const char* playback_name(Playback state) {

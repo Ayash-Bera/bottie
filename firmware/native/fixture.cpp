@@ -21,6 +21,8 @@ int main(int argc, char** argv) {
     uint64_t elapsed = 0, wall = 0;
     const char* art_path = nullptr;
     const char* text_path = nullptr;
+    const char* detail_path = nullptr;
+    uint8_t detail_field=0,detail_page=0;
     const char* frame_path = nullptr;
     uint16_t width = 128, height = 128;
     bottie::Button button{};
@@ -35,6 +37,13 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[n], "--elapsed-ms") == 0 && n + 1 < argc) { if (!number(argv[++n], elapsed)) return 2; }
         else if (std::strcmp(argv[n], "--wall-ms") == 0 && n + 1 < argc) { if (!number(argv[++n], wall)) return 2; }
         else if (std::strcmp(argv[n], "--text") == 0 && n + 1 < argc) text_path = argv[++n];
+        else if (std::strcmp(argv[n], "--detail") == 0 && n + 1 < argc) detail_path=argv[++n];
+        else if (std::strcmp(argv[n], "--detail-field") == 0 && n + 1 < argc) {
+            uint64_t value; if(!number(argv[++n],value)||value>3) return 2; detail_field=static_cast<uint8_t>(value);
+        }
+        else if (std::strcmp(argv[n], "--detail-page") == 0 && n + 1 < argc) {
+            uint64_t value; if(!number(argv[++n],value)||value>3) return 2; detail_page=static_cast<uint8_t>(value);
+        }
         else if (std::strcmp(argv[n], "--art") == 0 && n + 1 < argc) art_path = argv[++n];
         else if (std::strcmp(argv[n], "--frame") == 0 && n + 1 < argc) frame_path = argv[++n];
         else if (std::strcmp(argv[n], "--profile") == 0 && n + 1 < argc) {
@@ -68,7 +77,7 @@ int main(int argc, char** argv) {
     settings.volume = model.snapshot.volume_percent;
     if (control) {
         bottie::Intent intent;
-        char body[128];
+        char body[256];
         if (!model.intent(button, elapsed, intent)) { std::fputs("Control unavailable\n", stderr); return 3; }
         if (!bottie::encode_intent(intent, body, sizeof body)) return 1;
         std::puts(body);
@@ -103,10 +112,24 @@ int main(int argc, char** argv) {
         if (!text_cache.commit(model.snapshot, size)) { std::fputs("Text mask rejected\n", stderr); return 1; }
     }
     const auto text_mask = text_cache.view(model.snapshot);
+    std::array<uint8_t,bottie::detail_capacity+1> detail_bytes{};
+    bottie::DetailPage detail;
+    if(detail_path) {
+        bottie::DetailSelection request;
+        if(!request.select(model.snapshot,detail_field,detail_page,1)) return 1;
+        FILE* file=std::fopen(detail_path,"rb"); if(!file) return 2;
+        const size_t size=std::fread(detail_bytes.data(),1,detail_bytes.size(),file);
+        const bool read_ok=!std::ferror(file); std::fclose(file);
+        if(!read_ok || !bottie::network::policy::detail_digest_valid(request.digest,detail_bytes.data(),size) ||
+           !bottie::parse_detail(detail_bytes.data(),size,request,detail)) return 1;
+        settings.open=false; settings.detail_open=settings.detail_ready=true;
+        settings.detail_field=detail.field; settings.detail_page=detail.page;
+        settings.detail_count=detail.count; settings.detail_flags=detail.flags;
+    }
     std::array<uint16_t, bottie::max_frame_width * bottie::max_frame_height> pixels{};
     bottie::Frame frame{pixels.data(), pixels.size(), width, height, width};
     if (!bottie::render(model, elapsed, frame, art_path ? &artwork : nullptr, &text_mask)) return 1;
-    if (!bottie::render_settings(model, elapsed, frame, settings)) return 1;
+    if (!bottie::render_settings(model, elapsed, frame, settings,&detail)) return 1;
     if (frame_path) {
         FILE* file = std::fopen(frame_path, "wb");
         if (!file) return 2;

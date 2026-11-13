@@ -111,6 +111,16 @@ bool Model::volume_intent(uint8_t percent, uint64_t now, Intent& output) const {
     std::memcpy(output.control_target, snapshot.control_target, sizeof output.control_target);
     return true;
 }
+bool Model::seek_intent(uint32_t position,uint64_t now,Intent& output) const {
+    const auto state=effective_state(now);
+    if((state!=Playback::playing && state!=Playback::paused) || !snapshot.capabilities.seek ||
+       !snapshot.control_target[0] || !snapshot.control_track[0] || !snapshot.duration_ms || position>86400000) return false;
+    output={}; output.action=Action::seek;
+    output.position_ms=static_cast<uint32_t>(std::min<uint64_t>(position,snapshot.duration_ms-1));
+    std::memcpy(output.control_target,snapshot.control_target,sizeof output.control_target);
+    std::memcpy(output.control_track,snapshot.control_track,sizeof output.control_track);
+    return true;
+}
 
 bool Model::allows(const Intent& intent, uint64_t now) const {
     if (effective_state(now) == Playback::unavailable ||
@@ -126,6 +136,8 @@ bool Model::allows(const Intent& intent, uint64_t now) const {
     case Action::shuffle: return cap.shuffle && state != Playback::idle;
     case Action::repeat: return cap.repeat && state != Playback::idle;
     case Action::volume: return cap.volume && intent.control_target[0] && intent.volume <= 100;
+    case Action::seek: return cap.seek && state!=Playback::idle && intent.control_track[0] &&
+        !std::strcmp(intent.control_track,snapshot.control_track) && snapshot.duration_ms && intent.position_ms<snapshot.duration_ms;
     }
     return false;
 }
@@ -141,6 +153,7 @@ bool encode_intent(const Intent& intent, char* output, size_t capacity) {
     case Action::shuffle: action = "shuffle"; break;
     case Action::repeat: action = "repeat"; break;
     case Action::volume: action = "volume"; break;
+    case Action::seek: action = "seek"; break;
     default: output[0] = 0; return false;
     }
     int length;
@@ -158,7 +171,16 @@ bool encode_intent(const Intent& intent, char* output, size_t capacity) {
     } else if (intent.action == Action::volume) {
         if (!intent.control_target[0] || intent.volume > 100) { output[0] = 0; return false; }
         length = std::snprintf(output, capacity, "{\"action\":\"volume\",\"value\":%u}", unsigned(intent.volume));
+    } else if(intent.action==Action::seek) {
+        if(!intent.control_target[0] || intent.position_ms>86400000 ||
+           !std::memchr(intent.control_track,0,sizeof intent.control_track) || std::strlen(intent.control_track)!=32) {
+            output[0]=0; return false;
+        }
+        for(char c:intent.control_track) if(c && !((c>='0'&&c<='9')||(c>='a'&&c<='f'))) { output[0]=0; return false; }
+        length=std::snprintf(output,capacity,"{\"action\":\"seek\",\"value\":%u,\"control_track\":\"%s\"}",
+            unsigned(intent.position_ms),intent.control_track);
     } else length = std::snprintf(output, capacity, "{\"action\":\"%s\"}", action);
+    if(intent.action!=Action::seek && intent.control_track[0]) { output[0]=0; return false; }
     if (length < 0 || static_cast<size_t>(length) >= capacity) { output[0] = 0; return false; }
     if (intent.control_target[0]) {
         if (!std::memchr(intent.control_target, 0, sizeof intent.control_target) || std::strlen(intent.control_target) != 32) {

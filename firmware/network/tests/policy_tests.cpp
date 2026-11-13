@@ -85,6 +85,38 @@ int main() {
     assert(!control_valid(valid.data(), 1025));
     assert(control_ack(reinterpret_cast<const uint8_t*>("{ \"ok\": true }\n"), 15));
     assert(!control_ack(reinterpret_cast<const uint8_t*>("{\"ok\":false}"), 12));
+    for(uint32_t position:{0U,1U,86399999U,86400000U}) {
+        Intent intent; intent.action=Action::seek; intent.position_ms=position;
+        std::strcpy(intent.control_target,"0123456789abcdef0123456789abcdef");
+        std::strcpy(intent.control_track,"abcdef0123456789abcdef0123456789");
+        char body[256]; assert(encode_intent(intent,body,sizeof body));
+        assert(control_valid(body,std::strlen(body)));
+    }
+    const std::string track=",\"control_track\":\"abcdef0123456789abcdef0123456789\"";
+    for(const char* value:{"-1","86400001","1.0","1e1","true","null","\"50\"","01"}) {
+        const auto json=std::string("{\"action\":\"seek\",\"value\":")+value+track+guard;
+        assert(!control_valid(json.data(),json.size()));
+    }
+    for(const auto& json:{std::string("{\"action\":\"seek\",\"value\":50")+guard,
+        std::string("{\"action\":\"seek\",\"value\":50")+track+"}",std::string("{\"action\":\"pause\"")+track+guard})
+        assert(!control_valid(json.data(),json.size()));
+    for(const char* body:{"{\"ok\":true,\"result\":\"accepted\",\"position_ms\":0}","{\"ok\":true,\"result\":\"accepted\"}"}) {
+        ControlReply reply; assert(parse_control_reply(reinterpret_cast<const uint8_t*>(body),std::strlen(body),200,reply));
+        assert(reply.phase==FeedbackPhase::sent);
+    }
+    for(const char* body:{"{\"ok\":true,\"result\":\"confirmed\"}","{\"ok\":true,\"position_ms\":86400000}",
+        "{\"ok\":true,\"position_ms\":1.0}","{\"ok\":true,\"position_ms\":false}"}) {
+        ControlReply reply; assert(!parse_control_reply(reinterpret_cast<const uint8_t*>(body),std::strlen(body),200,reply));
+    }
+    for(const char* code:{"target_changed","track_changed","unsupported","not_authorized","keyring_locked", "keyring_unavailable","rate_limited","upstream_error"}) {
+        const std::string body=std::string("{\"error\":{\"code\":\"")+code+"\"}}";
+        const std::string wire="HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\nContent-Length: "+
+            std::to_string(body.size())+"\r\n\r\n"+body;
+        FakeStream stream(wire,1); uint8_t output[256]; Response response;
+        assert(read_response(stream,Media::json,output,sizeof output,response,true)==ResponseError::status);
+        ControlReply reply; assert(parse_control_reply(output,response.length,response.status,reply));
+        assert(reply.phase==FeedbackPhase::failed && reply.error!=ControlError::none);
+    }
 
     Backoff backoff;
     assert(backoff.ready(0));

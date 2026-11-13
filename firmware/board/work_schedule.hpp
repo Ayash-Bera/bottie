@@ -12,7 +12,8 @@ public:
         if (now >= asset_at_) return WorkerWork::asset;
         return WorkerWork::wait;
     }
-    void polled(uint64_t now) { poll_at_ = now + 1000; asset_at_ = now; }
+    void polled(uint64_t now, bool playing = true) { poll_at_ = now + (playing ? 1000 : 5000); asset_at_ = now; }
+    void refresh(uint64_t now) { poll_at_ = now; }
     void asset_attempted(uint64_t now) { asset_at_ = now + 250; }
     void control_attempted(uint64_t now) { poll_at_ = now; }
     uint32_t wait_ms(uint64_t now) const {

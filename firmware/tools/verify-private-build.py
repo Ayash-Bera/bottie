@@ -37,6 +37,10 @@ if '--image' in sys.argv:
     manifest = {'image': str(image), 'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data),
                 'offset': 0x10000, 'erase_bytes': aligned, 'slot_bytes': 0x140000,
                 'source_commit': commit, 'source_dirty': dirty,
+                'application_preferences': {'partition': 'nvs', 'offset': 0x9000, 'bytes': 0x5000,
+                    'namespace': 'bottie_ui_v1', 'key': 'prefs', 'record_version': 1,
+                    'record_bytes': 12, 'backup_before_first_boot_required': True,
+                    'explicit_erase_permitted': False, 'preserve_foreign_logical_contents': True},
                 'configuration_sha256': hashlib.sha256(header.read_bytes()).hexdigest()}
     (private / 'candidate.json').write_text(json.dumps(manifest, indent=2) + '\n')
     (private / 'candidate.json').chmod(0o600)

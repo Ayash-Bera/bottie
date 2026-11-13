@@ -1,7 +1,7 @@
 if(BOTTIE_HEADLESS)
     set(app_sources "headless.cpp" "../board/simulated.cpp")
     if(BOTTIE_RECOVERED_PANEL)
-        list(APPEND app_sources "../board/recovered_profile.cpp" "../board/recovered_spi.cpp" "../board/cgotchi_input.cpp")
+        list(APPEND app_sources "../board/recovered_profile.cpp" "../board/recovered_spi.cpp" "../board/cgotchi_input.cpp" "../board/preference_store.cpp")
     endif()
     if(BOTTIE_LIVE_COMPANION)
         list(APPEND app_sources "../board/live_runtime.cpp")
@@ -10,7 +10,7 @@ else()
     set(app_sources "smoke.c")
 endif()
 idf_component_register(SRCS ${app_sources}
-                       PRIV_REQUIRES spi_flash bottie_core esp_timer esp_driver_spi esp_driver_gpio esp_driver_i2c esp_driver_ledc esp_system heap
+                       PRIV_REQUIRES spi_flash bottie_core esp_timer esp_driver_spi esp_driver_gpio esp_driver_i2c esp_driver_ledc esp_system heap nvs_flash
                        INCLUDE_DIRS "../board")
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_17)
 target_compile_options(${COMPONENT_LIB} PRIVATE -fstack-usage)

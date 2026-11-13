@@ -121,13 +121,13 @@ void gestures() {
     for (uint64_t t = 200; t <= 860; t += 20) CHECK(!idle.update(point(120,148,t), model, t).control);
     CHECK(idle.settings.open);
     idle.update(point(0,0,880,false), model, 880);
-    idle.update(point(120,180,900), model, 900);
+    idle.update(point(72,228,900), model, 900);
     auto resume = idle.update(point(0,0,960,false), model, 960);
     CHECK(resume.control && resume.intent.action == Action::play);
     model.disconnected();
-    idle.update(point(120,180,1000), model, 1000);
+    idle.update(point(72,228,1000), model, 1000);
     CHECK(!idle.update(point(0,0,1060,false), model, 1060).control);
-    idle.update(point(120,220,1100), model, 1100);
+    idle.update(point(168,228,1100), model, 1100);
     idle.update(point(0,0,1160,false), model, 1160);
     CHECK(!idle.settings.open);
 }
@@ -135,17 +135,17 @@ void sliders_and_mailbox() {
     auto model = playing(); Interaction ui;
     ui.settings.open = true; ui.refresh(model, 0);
     CHECK(ui.settings.volume == 45);
-    CHECK(ui.update(point(30,128,40),model,40).brightness_changed && ui.settings.brightness == 10);
+    CHECK(ui.update(point(30,101,40),model,40).brightness_changed && ui.settings.brightness == 10);
     ui.update(point(239,220,80),model,80);
     CHECK(ui.settings.brightness == 100 && ui.settings.open);
     CHECK(!ui.update(point(0,0,100,false),model,100).control && ui.settings.open);
     CHECK(brightness_duty(0) == 102 && brightness_duty(10) == 102 && brightness_duty(100) == 1023 && brightness_duty(255) == 1023);
-    auto volume = ui.update(point(30,178,140),model,140);
+    auto volume = ui.update(point(30,147,140),model,140);
     CHECK(volume.control && volume.intent.action == Action::volume && volume.intent.volume == 0);
-    auto max = ui.update(point(239,178,180),model,180);
+    auto max = ui.update(point(239,147,180),model,180);
     CHECK(max.control && max.intent.volume == 100);
     model.snapshot.control_target[0] = 'f'; ui.refresh(model,200);
-    CHECK(!ui.update(point(120,178,220),model,220).control);
+    CHECK(!ui.update(point(120,147,220),model,220).control);
     ui.update(point(0,0,240,false),model,240);
     model.snapshot.capabilities.volume = false; ui.refresh(model,260);
     CHECK(ui.settings.volume == -1);
@@ -174,7 +174,7 @@ void queued_context_changes() {
             auto model = playing();
             Interaction ui; ui.settings.open = volume; ui.refresh(model, 0);
             PointerQueue queue;
-            const unsigned y = volume ? 178 : 268;
+            const unsigned y = volume ? 147 : 268;
             for (auto p : {point(120,y,40), point(0,0,80,false), point(180,y,100), point(0,0,140,false)})
                 CHECK(queue.push(p));
             if (scenario == 0) model.snapshot.control_target[0] = 'f';
@@ -203,12 +203,12 @@ void queued_context_changes() {
     }
     auto model = playing(); Interaction local;
     local.settings.open = true; local.refresh(model,0);
-    CHECK(local.update(point(30,128,40),model,40).brightness_changed);
+    CHECK(local.update(point(30,101,40),model,40).brightness_changed);
     model.snapshot.control_target[0] = 'f'; local.refresh(model,100);
     CHECK(local.settings.open && local.settings.brightness == minimum_brightness);
-    CHECK(!local.update(point(239,128,80),model,100).brightness_changed);
+    CHECK(!local.update(point(239,101,80),model,100).brightness_changed);
     local.update(point(0,0,120,false),model,120);
-    CHECK(local.update(point(209,128,140),model,140).brightness_changed);
+    CHECK(local.update(point(209,101,140),model,140).brightness_changed);
     CHECK(local.settings.brightness == 100);
     Interaction first;
     Model empty; first.refresh(empty,0);

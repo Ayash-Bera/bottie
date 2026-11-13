@@ -130,7 +130,7 @@ bool token_valid(const char* token) {
 
 bool control_valid(const char* json, size_t length) {
     if (!json || !length || length > control_capacity) return false;
-    char text[128];
+    char text[256];
     if (!compact(reinterpret_cast<const uint8_t*>(json), length, text, sizeof text)) return false;
     bool guarded = false;
     if (char* guard = std::strstr(text, ",\"control_target\":\"")) {
@@ -155,11 +155,22 @@ bool control_valid(const char* json, size_t length) {
         unsigned value;
         return *last == '}' && !(last - first > 1 && *first == '0') && decimal(first, last, 100, value);
     }
+    constexpr char seek[]="{\"action\":\"seek\",\"value\":";
+    if(guarded && !std::strncmp(text,seek,sizeof seek-1)) {
+        char* track=std::strstr(text,",\"control_track\":\"");
+        if(!track) return false;
+        const char* token=track+std::strlen(",\"control_track\":\"");
+        if(std::strlen(token)!=34 || token[32]!='"' || token[33]!='}') return false;
+        for(unsigned n=0;n<32;++n) if(!((token[n]>='0'&&token[n]<='9')||(token[n]>='a'&&token[n]<='f'))) return false;
+        const char* first=text+sizeof seek-1;
+        unsigned value;
+        return !(track-first>1 && *first=='0') && decimal(first,track,86400000,value);
+    }
     return false;
 }
 bool control_ack(const uint8_t* data, size_t length) {
-    char text[32];
-    return data && compact(data, length, text, sizeof text) && !std::strcmp(text, "{\"ok\":true}");
+    ControlReply reply;
+    return parse_control_reply(data,length,200,reply) && reply.phase==FeedbackPhase::sent;
 }
 bool artwork_valid(const uint8_t* data, size_t length, uint16_t width, uint16_t height, Artwork& view) {
     Artwork candidate;
@@ -175,7 +186,7 @@ void Backoff::fail(uint64_t now, unsigned retry_seconds) {
     until = now > std::numeric_limits<uint64_t>::max() - duration ? std::numeric_limits<uint64_t>::max() : now + duration;
 }
 
-ResponseError read_response(Stream& stream, Media media, uint8_t* output, size_t capacity, Response& response) {
+ResponseError read_response(Stream& stream, Media media, uint8_t* output, size_t capacity, Response& response,bool error_body) {
     response = {};
     char text[512];
     size_t headers = 0;
@@ -219,14 +230,14 @@ ResponseError read_response(Stream& stream, Media media, uint8_t* output, size_t
             if (decimal(value, end, 1000000, seconds)) response.retry_seconds = std::min(seconds, 300U);
         }
     }
-    if (response.status != 200) return ResponseError::status;
+    if (response.status != 200 && !error_body) return ResponseError::status;
     if (!has_type || !type_matches) return ResponseError::media;
     if (has_length == chunked) return ResponseError::framing;
     if (has_length) {
         if (length > capacity) return ResponseError::size;
         if (!exact(stream, output, length)) return ResponseError::io;
         response.length = length;
-        return ResponseError::none;
+        return response.status==200 ? ResponseError::none : ResponseError::status;
     }
     for (unsigned chunks = 0; chunks < 1024; ++chunks) {
         size_t metadata = 0;
@@ -247,7 +258,7 @@ ResponseError read_response(Stream& stream, Media media, uint8_t* output, size_t
             do {
                 if (!line(stream, text, sizeof text, trailers, 1024)) return ResponseError::framing;
             } while (*text);
-            return ResponseError::none;
+            return response.status==200 ? ResponseError::none : ResponseError::status;
         }
         if (chunk > capacity - response.length) return ResponseError::size;
         if (!exact(stream, output + response.length, chunk)) return ResponseError::io;

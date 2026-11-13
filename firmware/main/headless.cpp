@@ -9,6 +9,7 @@
 #endif
 #if BOTTIE_RECOVERED_PANEL
 #include "recovered_spi.hpp"
+#include "preference_store.hpp"
 #endif
 
 #include <array>
@@ -34,8 +35,10 @@ extern "C" void app_main(void) {
     static bottie::DirtyBands dirty;
     static bottie::InputServiceStats input_stats;
     static bottie::SceneInputFence input_fence;
+    static bottie::PreferenceState preferences;
 #if BOTTIE_RECOVERED_PANEL
     static bottie::RecoveredBoard board;
+    static bottie::PreferenceStore preference_store;
 #else
     static bottie::SimulatedBoard board;
 #endif
@@ -49,8 +52,11 @@ extern "C" void app_main(void) {
     static std::array<uint16_t, BOTTIE_FRAME_WIDTH * stored_rows> pixels;
     bottie::Frame frame{pixels.data(), pixels.size(), BOTTIE_FRAME_WIDTH, BOTTIE_FRAME_HEIGHT, BOTTIE_FRAME_WIDTH};
 #if BOTTIE_RECOVERED_PANEL
+    preference_store.start(preferences);
+    interaction.load_preferences(preferences.value(),board.monotonic_ms());
     std::puts("Cgotchi profile: documented CST810 input and PWM; PSRAM disabled.");
     if (!board.initialize()) { std::puts("Recovered panel initialization stopped"); return; }
+    if (!board.brightness(interaction.applied_brightness())) std::puts("BOTTIE_BRIGHTNESS write_error=1");
 #else
     std::puts("Bottie headless output. No display, touch or PSRAM driver is configured.");
 #endif
@@ -69,6 +75,8 @@ extern "C" void app_main(void) {
         uint64_t now = board.monotonic_ms();
 #if BOTTIE_LIVE_COMPANION
         live.consume(model);
+        bottie::ControlOutcome outcome;
+        if(live.outcome(outcome)) interaction.outcome(outcome,now);
 #else
         if (now >= poll_at) {
             size_t length = 0;
@@ -80,18 +88,28 @@ extern "C" void app_main(void) {
         }
 #endif
         now = board.monotonic_ms();
+#if BOTTIE_RECOVERED_PANEL
+        bottie::PreferenceWrite completed;
+        bottie::StoreResult stored;
+        if (preference_store.result(completed,stored)) preferences.complete(completed,stored);
+#endif
+        interaction.settings.save_status = preferences.status();
         input_fence.observe(model,now,interaction);
-        auto dispatch = [&](const bottie::Intent& intent) {
+        auto dispatch = [&](bottie::Intent intent) {
+            if(!intent.sequence) interaction.queued(intent,model,board.monotonic_ms());
 #if BOTTIE_LIVE_COMPANION
-            if (!live.enqueue(intent)) std::puts("BOTTIE_CONTROL queue_rejected=1");
+            if (!live.enqueue(intent)) {
+                std::puts("BOTTIE_CONTROL queue_rejected=1");
+                interaction.outcome({intent,{bottie::FeedbackPhase::failed},board.monotonic_ms()},board.monotonic_ms());
+            }
 #else
-            char body[128];
+            char body[256];
             if (bottie::encode_intent(intent, body, sizeof body) && !board.control(body, std::strlen(body))) model.disconnected();
 #endif
         };
         auto input = [&]() {
             input_fence.before_input(interaction,board.monotonic_ms());
-            return bottie::service_inputs(interaction,model,frame.width,frame.height,
+            const bool changed=bottie::service_inputs(interaction,model,frame.width,frame.height,
                 [&]() {
 #if BOTTIE_LIVE_COMPANION && !BOTTIE_RECOVERED_PANEL
                     return bottie::InputEvent{};
@@ -104,17 +122,36 @@ extern "C" void app_main(void) {
 #else
                     (void)value;
 #endif
-                },input_stats);
+                },input_stats,[&](const bottie::UiAction& action) {
+                    preferences.change({interaction.settings.brightness,interaction.settings.dim_mode});
+                    if (action.preferences_released) preferences.release(board.monotonic_ms());
+#if BOTTIE_LIVE_COMPANION
+                    if (action.wake || action.refresh) live.refresh();
+#endif
+                });
+#if BOTTIE_LIVE_COMPANION
+            live.select_detail(interaction.detail_selection());
+#endif
+            return changed;
         };
         input();
-        const auto settings = interaction.settings;
+#if BOTTIE_RECOVERED_PANEL
+        bottie::PreferenceWrite pending;
+        if (preferences.take(board.monotonic_ms(),pending) && !preference_store.submit(pending))
+            preferences.complete(pending,bottie::StoreResult::write_error);
+#endif
+        interaction.settings.save_status = preferences.status();
 #if BOTTIE_LIVE_COMPANION
         const bottie::Artwork* artwork = live.artwork();
         const auto text_mask = live.text_mask();
+        const auto detail=live.detail(model.snapshot,interaction.detail_selection());
 #else
         const bottie::Artwork* artwork = nullptr;
         const bottie::TextMask text_mask{};
+        const bottie::DetailPage detail{};
 #endif
+        interaction.settings.detail_ready=detail.pixels!=nullptr;
+        const auto settings = interaction.settings;
 #if BOTTIE_LIVE_COMPANION
         dirty.prepare(model,now,settings,live.artwork_revision(),live.text_revision(),frame.width,frame.height);
 #else
@@ -146,7 +183,7 @@ extern "C" void app_main(void) {
             frame.storage_y = y;
             frame.storage_height = std::min(stored_rows, static_cast<uint16_t>(frame.height - y));
             bool rendered = bottie::render(model, now, frame, artwork, &text_mask);
-            if (rendered) rendered = bottie::render_settings(model, now, frame, settings);
+            if (rendered) rendered = bottie::render_settings(model, now, frame, settings,&detail);
             render_us += esp_timer_get_time() - render_start;
             if (rendered && diagnose) {
                 bottie::PixelDiagnostics band;
@@ -194,6 +231,10 @@ extern "C" void app_main(void) {
             std::printf("BOTTIE_TOUCH samples=%u valid=%u errors=%u overflows=%u max_gap_ms=%u max_read_us=%u brightness=%u settings=%u\n",
                         unsigned(input.samples), unsigned(input.valid), unsigned(input.errors), unsigned(input.overflows),
                         unsigned(input.max_gap_ms), unsigned(input.max_read_us), unsigned(settings.brightness), unsigned(settings.open));
+            std::printf("BOTTIE_PREFS preferred=%u applied=%u dim=%u save=%u stack_free=%u writes=%u errors=%u init_heap=%d sdk=%d\n",
+                unsigned(settings.brightness),unsigned(interaction.applied_brightness()),unsigned(interaction.dimmed()),
+                unsigned(preferences.status()),unsigned(preference_store.stack_free()),unsigned(preference_store.writes()),
+                unsigned(preference_store.errors()),int(preference_store.heap_delta()),int(preference_store.sdk_result()));
 #endif
             std::printf("BOTTIE_REDRAW bands=%llu pixel_bytes=%llu render_us=%llu present_us=%llu input_samples=%u max_input_age_ms=%u clock_minute=%d\n",
                 static_cast<unsigned long long>(bands),static_cast<unsigned long long>(pixel_bytes),
@@ -201,6 +242,8 @@ extern "C" void app_main(void) {
                 unsigned(input_stats.samples),unsigned(input_stats.max_age_ms),model.clock_minute(now));
             report_at = now + 10000;
         }
-        if (!interrupted) ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(playing ? 50 : 1000));
+        auto wait_ms = std::min<uint32_t>(playing ? 50 : 1000,interaction.power_wait_ms(board.monotonic_ms()));
+        if (preferences.status() == bottie::SaveStatus::pending) wait_ms = std::min<uint32_t>(wait_ms,100);
+        if (!interrupted) ulTaskNotifyTake(pdTRUE,std::max<TickType_t>(1,pdMS_TO_TICKS(wait_ms)));
     }
 }

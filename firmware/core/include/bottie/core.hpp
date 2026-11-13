@@ -18,12 +18,19 @@ enum class Playback { playing, paused, idle, unavailable };
 enum class Repeat { off, context, track };
 enum class Context { unknown, playlist, album };
 enum class Button { shuffle, previous, play_pause, next, repeat };
-enum class Action { play, pause, previous, next, shuffle, repeat, volume };
+enum class Action { play, pause, previous, next, shuffle, repeat, volume, seek };
+enum class OfflineReason { unknown, login_required, no_active_player, restricted, rate_limited,
+                           upstream_unavailable, wallet_locked, wallet_unavailable, stale,
+                           wifi_disconnected, gateway_unreachable };
 enum class Error { none, size, syntax, depth, tokens, field, range, version, stale };
 
 struct Capabilities {
-    bool play{}, pause{}, previous{}, next{}, shuffle{}, repeat{}, volume{};
+    bool play{}, pause{}, previous{}, next{}, shuffle{}, repeat{}, volume{}, seek{};
 };
+
+using Digest = std::array<uint8_t,32>;
+struct DetailField { std::array<Digest,4> pages{}; uint8_t count{}, flags{}; };
+struct DetailDescriptor { Digest identity{}; std::array<DetailField,4> fields{}; bool valid{}; };
 
 struct Clock {
     uint64_t unix_ms{};
@@ -47,6 +54,9 @@ struct Snapshot {
     int16_t volume_percent{-1};
     char control_target[33]{};
     bool target_known{};
+    char control_track[33]{};
+    OfflineReason offline_reason{OfflineReason::unknown};
+    DetailDescriptor details{};
     char text_mask_url[74]{};
     uint8_t text_mask_layout{};
     Clock clock{};
@@ -62,6 +72,10 @@ struct Intent {
     Repeat repeat{Repeat::off};
     uint8_t volume{};
     char control_target[33]{};
+    char control_track[33]{};
+    uint32_t position_ms{}, sequence{};
+    uint64_t released_ms{};
+    bool release_known{};
 };
 
 bool encode_intent(const Intent& intent, char* output, size_t capacity);
@@ -82,6 +96,7 @@ struct Model {
     bool intent(Button button, uint64_t now_ms, Intent& output) const;
     bool resume_intent(uint64_t now_ms, Intent& output) const;
     bool volume_intent(uint8_t percent, uint64_t now_ms, Intent& output) const;
+    bool seek_intent(uint32_t position_ms, uint64_t now_ms, Intent& output) const;
     bool allows(const Intent& intent, uint64_t now_ms) const;
     int clock_minute(uint64_t now_ms) const;
 };

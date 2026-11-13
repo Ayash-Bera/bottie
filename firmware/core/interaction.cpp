@@ -1,4 +1,5 @@
 #include "bottie/interaction.hpp"
+#include "bottie/text_mask.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -43,37 +44,78 @@ bool PointerQueue::pop(PointerSample& sample, uint64_t now) {
 }
 
 SettingsLayout settings_layout(uint16_t width, uint16_t height, bool volume) {
+    (void)volume;
     auto rect = [=](int x, int y, int w, int h) {
         return Rect{x * width / 240, y * height / 296, w * width / 240, h * height / 296};
     };
-    return {rect(12, 46, 216, volume ? 240 : 204), rect(30, 112, 180, 32),
-            rect(30, 162, 180, 32), rect(30, volume ? 208 : 168, 180, 30), rect(30, volume ? 246 : 208, 180, 30)};
+    return {rect(12,30,216,256), rect(30,86,180,30), rect(30,132,180,30),
+            rect(30,214,84,28), rect(126,214,84,28), rect(30,176,180,28)};
 }
 uint16_t brightness_duty(unsigned percent) {
     return static_cast<uint16_t>((1023 * std::clamp(percent, unsigned(minimum_brightness), 100U) + 50) / 100);
 }
+DetailLayout detail_layout(uint16_t width,uint16_t height) {
+    auto rect=[=](int x,int y,int w,int h) { return Rect{x*width/240,y*height/296,w*width/240,h*height/296}; };
+    return {rect(8,8,224,280),rect(12,68,216,96),rect(16,216,60,30),rect(164,216,60,30),rect(80,252,80,28)};
+}
+Rect seek_rect(uint16_t width,uint16_t height) { return {20*width/240,230*height/296,200*width/240,16*height/296}; }
 
 Interaction::Hit Interaction::hit(int x, int y, const Model& model, uint64_t now, uint16_t width, uint16_t height) const {
     if (x < 0 || y < 0 || x >= width || y >= height) return Hit::none;
+    if(settings.detail_open) {
+        const auto layout=detail_layout(width,height);
+        if(layout.close.contains(x,y)) return Hit::detail_close;
+        if(settings.detail_page && layout.previous.contains(x,y)) return Hit::detail_previous;
+        if(settings.detail_page+1<settings.detail_count && layout.next.contains(x,y)) return Hit::detail_next;
+        return Hit::none;
+    }
     if (settings.open) {
         auto layout = settings_layout(width, height, settings.volume_available);
         if (layout.brightness.contains(x, y)) return Hit::brightness;
         if (settings.volume_available && layout.volume.contains(x, y)) return Hit::volume;
         if (layout.resume.contains(x, y)) return Hit::resume;
         if (layout.close.contains(x, y)) return Hit::close;
+        if (layout.dim_timeout.contains(x, y)) return Hit::dim_timeout;
         return Hit::none;
     }
     if (model.effective_state(now) != Playback::playing) return Hit::none;
+    for(unsigned n=0;n<4;++n) {
+        const auto& box=text_boxes[n];
+        Rect bounds{box.x*width/240,box.y*height/296,box.width*width/240,box.height*height/296};
+        if(bounds.contains(x,y)) {
+            if(n==0) return model.snapshot.context_type==Context::playlist && model.snapshot.context_name[0] ? Hit::context :
+                model.snapshot.album[0] ? Hit::album : Hit::none;
+            if(n==1) return model.snapshot.context_type==Context::playlist && model.snapshot.context_name[0] &&
+                model.snapshot.album[0] ? Hit::album : Hit::none;
+            return n==2 ? (model.snapshot.title[0]?Hit::title:Hit::none) : (model.snapshot.artist[0]?Hit::artist:Hit::none);
+        }
+    }
+    Intent seek;
+    if(seek_rect(width,height).contains(x,y) && model.seek_intent(0,now,seek)) return Hit::seek;
     const int scale = width >= 200 ? 2 : 1;
     if (y < height - 25 * scale || y >= height - 3 * scale) return Hit::none;
     return static_cast<Hit>(static_cast<int>(Hit::shuffle) + std::min(4, x * 5 / width));
 }
-void Interaction::cancel() { pressed_ = false; suppressed_ = true; captured_ = Hit::none; }
+void Interaction::cancel() {
+    pressed_ = false; suppressed_ = true; captured_ = Hit::none;
+    settings.seek_preview=false; settings.pressed_button=-1;
+}
 void Interaction::expire(uint64_t now) {
     if (pressed_ && (now < last_valid_ms_ || now - last_valid_ms_ >= touch_stale_ms)) cancel();
 }
+void Interaction::load_preferences(Preferences preferences, uint64_t now) {
+    if (!preferences.valid()) return;
+    settings.brightness = preferences.brightness; settings.dim_mode = preferences.dim_mode;
+    power_.configure(preferences,now);
+}
 
 void Interaction::refresh(const Model& model, uint64_t now) {
+    feedback_.update(model,now); settings.feedback=feedback_.phase(); settings.feedback_error=feedback_.error();
+    if(settings.detail_open && !detail_.matches(model.snapshot)) { settings.detail_open=false; detail_.active=false; cancel(); }
+    if (wake_refresh_ && model.online && model.received_ms > wake_at_) {
+        wake_refresh_ = false;
+        barrier(now);
+    }
     Intent volume;
     const bool available = model.volume_intent(0, now, volume);
     const auto state = model.effective_state(now);
@@ -81,6 +123,7 @@ void Interaction::refresh(const Model& model, uint64_t now) {
     const bool context_changed = context_fresh_ != fresh || context_state_ != state ||
         settings.volume_available != available ||
         std::strcmp(context_target_, model.snapshot.control_target) != 0 ||
+        std::strcmp(context_control_track_,model.snapshot.control_track) != 0 ||
         std::strcmp(context_track_, model.snapshot.track_id) != 0;
     if (context_initialized_ && context_changed) {
         cancel();
@@ -92,6 +135,7 @@ void Interaction::refresh(const Model& model, uint64_t now) {
     context_state_ = state;
     std::memcpy(context_target_, model.snapshot.control_target, sizeof context_target_);
     std::memcpy(context_track_, model.snapshot.track_id, sizeof context_track_);
+    std::memcpy(context_control_track_,model.snapshot.control_track,sizeof context_control_track_);
     const bool changed = std::strcmp(volume_target_, model.snapshot.control_target) != 0;
     settings.volume_available = available;
     if ((!available || changed) && captured_ == Hit::volume) cancel();
@@ -100,6 +144,15 @@ void Interaction::refresh(const Model& model, uint64_t now) {
         settings.volume = model.snapshot.volume_percent;
     volume_updated_ = model.snapshot.updated_at_ms;
     std::memcpy(volume_target_, model.snapshot.control_target, sizeof volume_target_);
+}
+void Interaction::queued(Intent& intent,const Model& model,uint64_t now) {
+    intent.sequence=++sequence_;
+    settings.detail_open=false; detail_.active=false;
+    feedback_.begin(intent,model,now); settings.feedback=feedback_.phase(); settings.feedback_error=feedback_.error();
+}
+UiAction Interaction::finish(UiAction action,const Model& model,uint64_t now) {
+    if(action.control) queued(action.intent,model,now);
+    return action;
 }
 
 UiAction Interaction::update(const PointerSample& sample, const Model& model, uint64_t now, uint16_t width, uint16_t height) {
@@ -116,22 +169,60 @@ UiAction Interaction::update(const PointerSample& sample, const Model& model, ui
     }
     if (pressed_ && sample.at_ms - last_valid_ms_ >= touch_stale_ms) cancel();
     last_valid_ms_ = sample.at_ms;
+    const bool consuming_wake = power_.swallowing();
+    if (power_.activity(sample.at_ms,sample.down)) {
+        cancel(); wake_refresh_ = true; wake_at_ = now;
+        result.wake = result.brightness_changed = true;
+        return result;
+    }
+    if (consuming_wake) {
+        cancel();
+        if (!sample.down) { suppressed_ = false; cutoff_set_ = true; discard_through_ms_ = sample.at_ms; }
+        return result;
+    }
     if (!sample.down) {
+        if (pressed_ && !suppressed_ && captured_ == Hit::brightness) result.preferences_released = true;
+        if(pressed_ && !suppressed_ && captured_==Hit::seek && settings.seek_preview && !wake_refresh_ &&
+           sample.at_ms-started_ms_>=20 && !std::strcmp(started_target_,model.snapshot.control_target) &&
+           !std::strcmp(started_control_track_,model.snapshot.control_track) && !std::strcmp(started_track_,model.snapshot.track_id))
+            result.control=model.seek_intent(settings.seek_position,now,result.intent);
+        if(result.control && result.intent.action==Action::seek) {
+            result.intent.released_ms=sample.at_ms; result.intent.release_known=true;
+        }
         if (pressed_ && !suppressed_ && !moved_ && !held_ && sample.at_ms - started_ms_ >= 20 &&
             sample.at_ms - started_ms_ < long_press_ms) {
             const bool same = started_state_ == model.effective_state(now) &&
                               std::strcmp(started_track_, model.snapshot.track_id) == 0 &&
                               std::strcmp(started_target_, model.snapshot.control_target) == 0;
             if (captured_ == Hit::close) settings.open = false;
-            else if (captured_ == Hit::resume && same) {
+            else if(captured_==Hit::detail_close) { settings.detail_open=false; detail_.active=false; }
+            else if(captured_==Hit::detail_previous || captured_==Hit::detail_next) {
+                const auto page=static_cast<uint8_t>(settings.detail_page+(captured_==Hit::detail_next?1:-1));
+                if(detail_.select(model.snapshot,settings.detail_field,page,++sequence_)) {
+                    settings.detail_page=page; settings.detail_sequence=detail_.sequence; settings.detail_ready=false;
+                }
+            } else if(captured_>=Hit::title && captured_<=Hit::context && same) {
+                const uint8_t field=static_cast<uint8_t>(static_cast<int>(captured_)-static_cast<int>(Hit::title));
+                if(detail_.select(model.snapshot,field,0,++sequence_)) {
+                    settings.detail_open=true; settings.detail_ready=false; settings.detail_field=field;
+                    settings.detail_page=0; settings.detail_count=detail_.count; settings.detail_flags=detail_.flags;
+                    settings.detail_sequence=detail_.sequence;
+                }
+            }
+            else if (captured_ == Hit::dim_timeout) {
+                settings.dim_mode = static_cast<uint8_t>((settings.dim_mode+1)%5);
+                power_.configure({settings.brightness,settings.dim_mode},now);
+                result.preferences_released = result.brightness_changed = true;
+            } else if (captured_ == Hit::resume && same && !wake_refresh_) {
                 result.control = model.resume_intent(now, result.intent);
-            } else if (same && captured_ >= Hit::shuffle && captured_ <= Hit::repeat)
+            } else if (same && !wake_refresh_ && captured_ >= Hit::shuffle && captured_ <= Hit::repeat)
                 result.control = model.snapshot.control_target[0] &&
                     model.intent(static_cast<Button>(static_cast<int>(captured_) - static_cast<int>(Hit::shuffle)), now, result.intent);
         }
         pressed_ = suppressed_ = moved_ = held_ = false;
+        settings.seek_preview=false; settings.pressed_button=-1;
         captured_ = Hit::none;
-        return result;
+        return finish(result,model,now);
     }
     if (suppressed_) return result;
     if (!pressed_) {
@@ -141,28 +232,47 @@ UiAction Interaction::update(const PointerSample& sample, const Model& model, ui
         started_state_ = model.effective_state(now);
         std::memcpy(started_track_, model.snapshot.track_id, sizeof started_track_);
         std::memcpy(started_target_, model.snapshot.control_target, sizeof started_target_);
+        std::memcpy(started_control_track_,model.snapshot.control_track,sizeof started_control_track_);
+        if(captured_>=Hit::shuffle && captured_<=Hit::repeat)
+            settings.pressed_button=static_cast<int8_t>(static_cast<int>(captured_)-static_cast<int>(Hit::shuffle));
+        result.refresh=model.effective_state(now)!=Playback::playing;
     }
     if (captured_ == Hit::brightness) {
         const auto bar = settings_layout(width, height).brightness;
         const int value = minimum_brightness + (std::clamp(int(sample.x) - bar.x, 0, bar.width - 1) * (100 - minimum_brightness) + (bar.width - 1) / 2) / (bar.width - 1);
         result.brightness_changed = settings.brightness != value;
         settings.brightness = static_cast<uint8_t>(value);
+        power_.configure({settings.brightness,settings.dim_mode},now);
         moved_ = true;
         return result;
     }
     if (captured_ == Hit::volume) {
+        if (wake_refresh_) return result;
         if (std::strcmp(started_target_, model.snapshot.control_target) != 0) { cancel(); return result; }
         const auto bar = settings_layout(width, height, true).volume;
         const auto value = static_cast<uint8_t>((std::clamp(int(sample.x) - bar.x, 0, bar.width - 1) * 100 + (bar.width - 1) / 2) / (bar.width - 1));
         if (settings.volume != value) result.control = model.volume_intent(value, now, result.intent);
         if (result.control) settings.volume = value;
         moved_ = true;
+        return finish(result,model,now);
+    }
+    if(captured_==Hit::seek) {
+        if(wake_refresh_ || std::strcmp(started_control_track_,model.snapshot.control_track) ||
+           std::strcmp(started_target_,model.snapshot.control_target)) { cancel(); return result; }
+        const auto bar=seek_rect(width,height);
+        const auto position=static_cast<uint32_t>(uint64_t(std::clamp(int(sample.x)-bar.x,0,bar.width-1))*
+            model.snapshot.duration_ms/(bar.width-1));
+        Intent check;
+        if(!model.seek_intent(position,now,check)) { cancel(); return result; }
+        settings.seek_preview=true; settings.seek_position=check.position_ms; moved_=true;
         return result;
     }
     if (std::abs(int(sample.x) - start_x_) > 12 || std::abs(int(sample.y) - start_y_) > 12) moved_ = true;
     if (hit(sample.x, sample.y, model, now, width, height) != captured_) moved_ = true;
+    if(moved_) settings.pressed_button=-1;
     if (!moved_ && !held_ && sample.at_ms - started_ms_ >= long_press_ms) {
-        settings.open = true; held_ = true; captured_ = Hit::none;
+        settings.open = true; settings.detail_open=false; detail_.active=false;
+        settings.pressed_button=-1; held_ = true; captured_ = Hit::none;
     }
     return result;
 }

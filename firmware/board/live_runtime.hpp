@@ -22,6 +22,10 @@ public:
     bool stop(uint32_t timeout_ms = 7000);
     void consume(Model& model);
     bool enqueue(const Intent& intent);
+    void refresh();
+    void select_detail(const DetailSelection& selection);
+    DetailPage detail(const Snapshot& snapshot,const DetailSelection& selection) const;
+    bool outcome(ControlOutcome& outcome);
     const Artwork* artwork();
     TextMask text_mask() const;
     uint32_t artwork_revision() const { return displayed_.art_revision; }
@@ -33,8 +37,12 @@ private:
     void work();
     void publish(bool online, const Snapshot* snapshot = nullptr, const Artwork* art = nullptr,
                  uint64_t observed_ms = 0, const TextMask* mask = nullptr);
+    void publish_outcome(const ControlOutcome& outcome);
     network::Client client_;
     CachedPlayback shared_, displayed_;
+    CachedDetail shared_detail_, displayed_detail_;
+    DetailSelection requested_detail_, worker_detail_;
+    ControlOutcome outcome_{};
     Artwork displayed_view_;
     std::array<char, max_json_bytes + 1> body_{};
     std::array<StackType_t, stack_bytes / sizeof(StackType_t)> stack_{};
@@ -44,10 +52,12 @@ private:
     StaticSemaphore_t mutex_storage_{}, stopped_storage_{};
     SemaphoreHandle_t mutex_{}, stopped_{};
     std::atomic<bool> running_{false}, stopping_{false};
+    std::atomic<bool> refresh_requested_{};
     std::atomic<network::Status> status_{network::Status::disabled};
     std::atomic<uint32_t> polls_{}, accepted_{}, rejected_{}, stack_free_{}, poll_ms_{};
     std::atomic<uint32_t> sent_{}, control_errors_{};
     uint32_t published_{}, consumed_{};
+    uint32_t detail_published_{}, detail_consumed_{}, outcome_published_{}, outcome_consumed_{};
     bool started_{};
     TaskHandle_t consumer_{};
     std::atomic<TaskHandle_t> worker_{};

@@ -16,6 +16,7 @@ bool control_valid(const char* json, size_t length);
 bool control_ack(const uint8_t* data, size_t length);
 bool artwork_valid(const uint8_t* data, size_t length, uint16_t width, uint16_t height, Artwork& view);
 bool text_digest_valid(const char* path, const uint8_t* data, size_t length);
+bool detail_digest_valid(const Digest& expected,const uint8_t* data,size_t length);
 
 enum class Asset { none, text, artwork };
 struct AssetSchedule {
@@ -48,6 +49,6 @@ struct Response {
     unsigned status{}, retry_seconds{};
     size_t length{};
 };
-ResponseError read_response(Stream& stream, Media media, uint8_t* output, size_t capacity, Response& response);
+ResponseError read_response(Stream& stream, Media media, uint8_t* output, size_t capacity, Response& response,bool error_body = false);
 
 } // namespace bottie::network::policy

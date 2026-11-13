@@ -31,14 +31,23 @@ void DirtyBands::prepare(const Model& model, uint64_t now, const SettingsView& i
     const int dy = directions[sector][1] + (directions[(sector+1)%16][1]-directions[sector][1]) * int(fraction) / 1750;
     const bool dimensions = width != width_ || height != height_;
     width_ = width; height_ = height;
-    if (!initialized_ || dimensions || state != state_ || settings.open != settings_.open) invalidate();
+    if (!initialized_ || dimensions || state != state_ || settings.open != settings_.open ||
+        settings.detail_open!=settings_.detail_open) invalidate();
+    if(settings.detail_open && (settings.detail_sequence!=settings_.detail_sequence || settings.detail_ready!=settings_.detail_ready)) invalidate();
+    if(settings.seek_preview!=settings_.seek_preview || settings.seek_position!=settings_.seek_position) rows(height*230/296,height*246/296);
+    if(settings.pressed_button!=settings_.pressed_button) rows(height*246/296,height);
+    if(settings.feedback!=settings_.feedback || settings.feedback_error!=settings_.feedback_error) {
+        if(settings.open) rows(height*250/296-1,height*250/296+8);
+        else rows(height*285/296-1,height*285/296+8);
+    }
+    if(value.offline_reason!=snapshot_.offline_reason) rows(height*244/296,height*252/296);
     if (state == Playback::playing) {
         if (artwork != artwork_ || std::strcmp(value.artwork_url, snapshot_.artwork_url)) invalidate();
         if (value.context_type != snapshot_.context_type || std::strcmp(value.context_name, snapshot_.context_name) ||
             std::strcmp(value.album, snapshot_.album) || text != text_ || std::strcmp(value.text_mask_url, snapshot_.text_mask_url)) rows(0, 46);
         if (std::strcmp(value.title, snapshot_.title) || std::strcmp(value.artist, snapshot_.artist) || text != text_ ||
             std::strcmp(value.text_mask_url, snapshot_.text_mask_url)) rows(std::min(184, int(height)*194/296), std::max(230, int(height)*216/296+7));
-        if (!settings.open) {
+        if (!settings.open && !settings.detail_open) {
             if (dx != record_x_ || dy != record_y_) {
                 const int side = std::min(int(width)*128/240, int(height)*128/296);
                 const int cell = width >= 200 ? 2 : 1, radius = (side*7/16)/cell*cell;
@@ -48,9 +57,10 @@ void DirtyBands::prepare(const Model& model, uint64_t now, const SettingsView& i
             if (progress != progress_) rows(height*234/296-1, height*234/296+2);
         }
         if (controls != controls_) rows(height-25*scale, height);
-    } else if (minute != minute_ && !settings.open) rows(height*210/296, height*210/296+7*scale);
+    } else if (minute != minute_ && !settings.open && !settings.detail_open) rows(height*210/296, height*210/296+7*scale);
     if (settings.open && (settings.brightness != settings_.brightness || settings.volume != settings_.volume ||
-        settings.volume_available != settings_.volume_available || resume != resume_ || controls != controls_)) {
+        settings.volume_available != settings_.volume_available || settings.dim_mode != settings_.dim_mode ||
+        settings.save_status != settings_.save_status || resume != resume_ || controls != controls_)) {
         // Both old and new panel bounds are covered when volume availability changes.
         const auto old_panel = settings_layout(width,height,settings_.volume_available).panel;
         const auto panel = settings_layout(width,height,settings.volume_available).panel;

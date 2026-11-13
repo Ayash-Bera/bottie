@@ -116,6 +116,7 @@ struct Client::Impl {
     uint8_t art_bytes[artwork_capacity]{};
     char art_url[257]{};
     Artwork art;
+    uint8_t* detail{};
 
     static void event(void* context, esp_event_base_t base, int32_t id, void* data) {
         auto& self = *static_cast<Impl*>(context);
@@ -249,6 +250,7 @@ void Client::stop() {
         if (impl_->netif) esp_netif_destroy(impl_->netif);
         if (impl_->wifi_owned) esp_wifi_deinit();
         if (impl_->loop_owned) esp_event_loop_delete_default();
+        if(impl_->detail) heap_caps_free(impl_->detail);
         impl_->~Impl();
         volatile uint8_t* wipe = reinterpret_cast<volatile uint8_t*>(impl_);
         for (size_t i = 0; i < sizeof(Impl); ++i) wipe[i] = 0;
@@ -262,7 +264,7 @@ namespace {
 policy::ResponseError request(const policy::Origin& origin, const char* certificate, const char* token,
                               const char* path, const char* post, size_t post_size, policy::Media media,
                               uint8_t* output, size_t capacity, policy::Response& response, std::atomic<bool>& cancelled,
-                              const AssetInterrupt* interrupt = nullptr, uint32_t ticket = 0) {
+                              const AssetInterrupt* interrupt = nullptr, uint32_t ticket = 0,bool error_body = false) {
     Connection connection(cancelled, interrupt, ticket);
     if (!connection.connect(origin, certificate)) return policy::ResponseError::io;
     char headers[768];
@@ -272,7 +274,7 @@ policy::ResponseError request(const policy::Origin& origin, const char* certific
         media == policy::Media::json ? "application/json" : "application/octet-stream", static_cast<unsigned>(post_size));
     if (n <= 0 || static_cast<size_t>(n) >= sizeof headers || !connection.write(headers, static_cast<size_t>(n)) ||
         (post && !connection.write(post, post_size))) return policy::ResponseError::io;
-    return policy::read_response(connection, media, output, capacity, response);
+    return policy::read_response(connection, media, output, capacity, response,error_body);
 }
 Status response_status(policy::ResponseError error, const policy::Response& response, bool cancelled) {
     if (cancelled) return Status::cancelled;
@@ -354,6 +356,7 @@ bool Client::fetch_asset(const Snapshot& snapshot, uint32_t ticket) {
 }
 
 bool Client::control(const char* json, size_t length) {
+    last_reply_={};
     if (!impl_) return false;
     auto& state = *impl_;
     if (cancelled_.load()) { status_ = Status::cancelled; return false; }
@@ -363,8 +366,10 @@ bool Client::control(const char* json, size_t length) {
     uint8_t body[control_capacity];
     policy::Response response;
     auto error = request(state.origin, state.certificate, state.token, "/v1/control", json, length, policy::Media::json,
-                         body, sizeof body, response, cancelled_);
-    if (cancelled_.load() || error != policy::ResponseError::none || !policy::control_ack(body, response.length)) {
+                         body, sizeof body, response, cancelled_,nullptr,0,true);
+    const bool parsed=(error==policy::ResponseError::none || error==policy::ResponseError::status) &&
+        parse_control_reply(body,response.length,response.status,last_reply_);
+    if (cancelled_.load() || error != policy::ResponseError::none || !parsed || last_reply_.phase!=FeedbackPhase::sent) {
         state.clear_assets();
         state.http_backoff.fail(clock_ms(), response.retry_seconds);
         status_ = response_status(error, response, cancelled_.load());
@@ -374,5 +379,22 @@ bool Client::control(const char* json, size_t length) {
     status_ = Status::ready;
     return true;
 }
+
+bool Client::fetch_detail(const DetailSelection& selection,uint32_t ticket) {
+    if(!impl_ || !selection.active || cancelled_.load() || !asset_interrupt_.valid(ticket) || !impl_->connected.load()) return false;
+    auto& state=*impl_;
+    if(!state.detail) state.detail=static_cast<uint8_t*>(heap_caps_malloc(detail_capacity,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
+    if(!state.detail) return false;
+    char path[76]="/v1/detail/";
+    format_digest(selection.digest,path+11);
+    policy::Response response;
+    const auto error=request(state.origin,state.certificate,state.token,path,nullptr,0,policy::Media::artwork,
+        state.detail,detail_capacity,response,cancelled_,&asset_interrupt_,ticket);
+    DetailPage page;
+    return !cancelled_.load() && asset_interrupt_.valid(ticket) && error==policy::ResponseError::none &&
+        policy::detail_digest_valid(selection.digest,state.detail,response.length) &&
+        parse_detail(state.detail,response.length,selection,page);
+}
+const uint8_t* Client::detail_bytes() const { return impl_ ? impl_->detail : nullptr; }
 
 } // namespace bottie::network

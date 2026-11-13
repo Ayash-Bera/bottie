@@ -2,6 +2,8 @@
 
 #include "bottie/core.hpp"
 #include "bottie/text_mask.hpp"
+#include "bottie/detail.hpp"
+#include "bottie/feedback.hpp"
 #include <atomic>
 
 namespace bottie::network {
@@ -66,6 +68,9 @@ public:
     void interrupt_assets() { asset_interrupt_.interrupt(); }
     bool fetch_asset(const Snapshot& snapshot, uint32_t ticket);
     bool control(const char* json, size_t length);
+    ControlReply control_reply() const { return last_reply_; }
+    bool fetch_detail(const DetailSelection& selection,uint32_t ticket);
+    const uint8_t* detail_bytes() const;
     const Artwork* artwork() const;
     TextMask text_mask(const Snapshot& snapshot) const;
     Status status() const;
@@ -75,6 +80,7 @@ private:
     std::atomic<bool> cancelled_{false};
     AssetInterrupt asset_interrupt_;
     Status status_{Status::disabled};
+    ControlReply last_reply_{};
 };
 
 } // namespace bottie::network

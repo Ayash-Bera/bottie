@@ -327,6 +327,14 @@ bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* art
             clock[3] = char('0' + minute % 60 / 10); clock[4] = char('0' + minute % 10);
         }
         centered_text(canvas,frame.height*210/296,clock,ink,scale);
+        if(state==Playback::unavailable) {
+            constexpr const char* reasons[]{"","sign in on pc","no active player","player restricted","try again soon",
+                "spotify unavailable","unlock wallet on pc","wallet unavailable","waiting for update",
+                "wifi disconnected","pc unreachable"};
+            const auto reason=static_cast<unsigned>(model.snapshot.offline_reason);
+            if(reason<sizeof reasons/sizeof reasons[0] && reasons[reason][0])
+                centered_text(canvas,frame.height*244/296,reasons[reason],dim);
+        }
     }
     return true;
 }
@@ -344,11 +352,74 @@ uint32_t frame_hash(const Frame& frame) {
     return hash;
 }
 
-bool render_settings(const Model& model, uint64_t now, Frame frame, const SettingsView& settings) {
+bool render_settings(const Model& model, uint64_t now, Frame frame, const SettingsView& settings,const DetailPage* detail) {
     if (!frame.valid() || frame.width < 128 || frame.height < 128 || frame.width > max_frame_width ||
         frame.height > max_frame_height) return false;
-    if (!settings.open) return true;
     Canvas canvas{frame};
+    auto button = [&](const Rect& rect, const char* name, uint16_t color) {
+        canvas.rect(rect.x, rect.y, rect.width, rect.height, color);
+        canvas.rect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2, background);
+        const int text_width = static_cast<int>(std::strlen(name))*6-1;
+        text(canvas,rect.x+std::max(2,(rect.width-text_width)/2),rect.y+(rect.height-7)/2,name,rect.x+rect.width-2,color);
+    };
+    if(settings.detail_open) {
+        const auto layout=detail_layout(frame.width,frame.height);
+        canvas.rect(layout.panel.x,layout.panel.y,layout.panel.width,layout.panel.height,dim);
+        canvas.rect(layout.panel.x+1,layout.panel.y+1,layout.panel.width-2,layout.panel.height-2,background);
+        constexpr const char* fields[]{"song","artist","album","playlist"};
+        centered_text(canvas,frame.height*24/296,fields[std::min<unsigned>(settings.detail_field,3)],ink);
+        if(detail && detail->pixels && detail->field==settings.detail_field && detail->page==settings.detail_page &&
+           detail->count==settings.detail_count && detail->flags==settings.detail_flags) {
+            const auto& box=layout.body;
+            for(int y=std::max(box.y,canvas.top());y<std::min(box.y+box.height,canvas.bottom());++y) {
+                const unsigned sy=(y-box.y)*detail_height/box.height;
+                for(int x=0;x<box.width;++x) {
+                    const unsigned sx=x*detail_width/box.width;
+                    const auto packed=detail->pixels[sy*(detail_width/2)+sx/2];
+                    const unsigned alpha=sx&1?packed&15:packed>>4;
+                    const auto blend=[&](unsigned shift,unsigned mask) {
+                        return ((((ink>>shift)&mask)*alpha+((background>>shift)&mask)*(15-alpha)+7)/15)<<shift;
+                    };
+                    canvas.pixel(box.x+x,y,static_cast<uint16_t>(blend(11,31)|blend(5,63)|blend(0,31)));
+                }
+            }
+        } else centered_text(canvas,frame.height*112/296,"loading name",dim);
+        char label[24]; std::snprintf(label,sizeof label,"page %u of %u",unsigned(settings.detail_page+1),unsigned(settings.detail_count));
+        centered_text(canvas,frame.height*185/296,label,dim);
+        if(settings.detail_flags) centered_text(canvas,frame.height*200/296,"partial name",dim);
+        button(layout.previous,"prev",settings.detail_page?ink:dim);
+        button(layout.next,"next",settings.detail_page+1<settings.detail_count?ink:dim);
+        button(layout.close,"close",ink);
+        return true;
+    }
+    if(!settings.open) {
+        if(settings.seek_preview && model.snapshot.duration_ms) {
+            const auto bar=seek_rect(frame.width,frame.height);
+            const int x=bar.x+int(uint64_t(settings.seek_position)*(bar.width-1)/model.snapshot.duration_ms);
+            canvas.rect(bar.x,bar.y,bar.width,bar.height,background);
+            canvas.rect(bar.x,bar.y+bar.height/3,bar.width,1,dim);
+            canvas.rect(bar.x,bar.y+bar.height/3,x-bar.x,1,ink);
+            canvas.circle(x,bar.y+bar.height/3,2,ink);
+        }
+        if(settings.pressed_button>=0 && settings.pressed_button<5) {
+            const int x=settings.pressed_button*frame.width/5+2, w=frame.width/5-4, y=frame.height*246/296;
+            canvas.rect(x,y,w,1,ink); canvas.rect(x,y,1,frame.height*33/296,ink);
+            canvas.rect(x+w-1,y,1,frame.height*33/296,ink);
+        }
+    }
+    auto feedback = [&](int y) {
+        if(settings.feedback==FeedbackPhase::none) return;
+        constexpr const char* names[]{"","queued","sending","sent","confirmed","failed","expired","canceled","unknown"};
+        constexpr const char* errors[]{"failed","player changed","track changed","unsupported","sign in needed",
+            "wallet locked","wallet unavailable","try later","service error"};
+        const auto* label=settings.feedback==FeedbackPhase::failed ?
+            errors[std::min<unsigned>(static_cast<unsigned>(settings.feedback_error),8)] :
+            names[std::min<unsigned>(static_cast<unsigned>(settings.feedback),8)];
+        const int left=settings.open?frame.width*13/240:0;
+        canvas.rect(left,y-1,frame.width-2*left,9,background);
+        centered_text(canvas,y,label,ink);
+    };
+    if (!settings.open) { feedback(frame.height*285/296); return true; }
     Intent volume;
     const bool has_volume = model.volume_intent(0, now, volume);
     const auto layout = settings_layout(frame.width, frame.height, has_volume);
@@ -382,15 +453,17 @@ bool render_settings(const Model& model, uint64_t now, Frame frame, const Settin
     }
     Intent resume;
     const bool enabled = model.resume_intent(now, resume);
-    auto button = [&](const Rect& rect, const char* name, uint16_t color) {
-        canvas.rect(rect.x, rect.y, rect.width, rect.height, color);
-        canvas.rect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2, background);
-        centered_text(canvas, rect.y + (rect.height - 7) / 2, name, color);
-    };
     const auto state = model.effective_state(now);
     button(layout.resume, enabled ? (state == Playback::idle ? "play" : "resume") :
            state == Playback::playing ? "playing" : "unavailable", enabled ? ink : dim);
     button(layout.close, "close", ink);
+    constexpr const char* dim_names[]{"dim off","dim 30s","dim 60s","dim 2m","dim 5m"};
+    button(layout.dim_timeout, dim_names[std::min<unsigned>(settings.dim_mode,4)], ink);
+    const char* storage = settings.save_status == SaveStatus::saved ? "saved" :
+        settings.save_status == SaveStatus::pending ? "saving" :
+        settings.save_status == SaveStatus::defaults ? "defaults" : "not saved";
+    centered_text(canvas,panel.y+panel.height-20*frame.height/296,storage,dim);
+    feedback(frame.height*250/296);
     return true;
 }
 } // namespace bottie
