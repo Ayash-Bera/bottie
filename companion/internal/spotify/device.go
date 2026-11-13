@@ -87,6 +87,19 @@ func (p *Player) saveObservationLocked(s models.Playback, d *upstreamDevice) {
 		}
 		p.targetID = d.ID
 		s.Capabilities.Volume = d.SupportsVolume != nil && *d.SupportsVolume
+		if s.TrackID != "" && s.DurationMS > 0 {
+			if s.ControlTarget == p.cached.ControlTarget && s.TrackID == p.cached.TrackID && s.DurationMS == p.cached.DurationMS {
+				s.ControlTrack = p.cached.ControlTrack
+			}
+			if s.ControlTrack == "" {
+				var nonce [16]byte
+				if _, err := rand.Read(nonce[:]); err != nil {
+					s.Capabilities.Seek = false
+				} else {
+					s.ControlTrack = hex.EncodeToString(nonce[:])
+				}
+			}
+		}
 	} else {
 		s.Capabilities = models.Capabilities{}
 	}
@@ -97,7 +110,11 @@ func targetChanged() *models.ServiceError {
 	return models.Problem("target_changed", 409, "playback device changed; fetch playback before controlling it")
 }
 
-func (p *Player) checkTarget(ctx context.Context, action string) (string, *models.ServiceError) {
+func trackChanged() *models.ServiceError {
+	return models.Problem("track_changed", 409, "playback track changed; fetch playback before seeking")
+}
+
+func (p *Player) checkTarget(ctx context.Context, action string, snapshot models.Playback) (string, *models.ServiceError) {
 	p.mu.RLock()
 	expected := p.targetID
 	p.mu.RUnlock()
@@ -111,6 +128,8 @@ func (p *Player) checkTarget(ctx context.Context, action string) (string, *model
 		e = p.backoff("upstream_error", "")
 	} else if status == 204 || u.Device == nil || u.Device.ID != expected || expected == "" {
 		e = targetChanged()
+	} else if action == "seek" && (u.Item == nil || u.Item.ID != snapshot.TrackID || u.Item.Duration != snapshot.DurationMS || u.Item.Duration <= 0 || u.Item.Duration > models.MaxDuration) {
+		e = trackChanged()
 	} else {
 		caps := u.capabilities(p.tokens.canControl)
 		caps.Volume = u.Device.identified() && p.tokens.canControl && u.Device.SupportsVolume != nil && *u.Device.SupportsVolume && u.Item != nil && u.Item.Type == "track" && (u.Type == "" || u.Type == "track")

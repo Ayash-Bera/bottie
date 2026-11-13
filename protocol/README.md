@@ -2,6 +2,8 @@
 
 The optional [clock extension](clock.md) carries bounded UTC milliseconds and a local minute offset independently of playback freshness and control/text identity. Invalid optional clock data is ignored by consumers.
 
+The [daily-use extension](usability.md) adds guarded seek, accepted feedback, availability reasons and bounded paginated name details. Complete gateway snapshots remain within 8192 bytes and 256 parser tokens; optional detail descriptors are omitted when either budget would be exceeded.
+
 The companion owns account access, metadata, controls and artwork conversion. The device owns rendering and touch. No account credentials cross this interface. HTTP is intended for loopback or a trusted local network. Configure device bearer authentication before binding to a non-loopback address.
 
 ## Playback
@@ -27,6 +29,7 @@ An optional `text_mask` descriptor from the narrow gateway provides [bounded Ben
 | shuffle | boolean, required |
 | repeat | off, context or track string, required |
 | volume | integer 0..100, required; `control_target` also required |
+| seek | integer 0..86400000 milliseconds, required; current `control_target` and `control_track` required |
 
 Snapshots emit `volume_percent` as an integer 0..100 or `null` when unknown. Missing values in older snapshots also mean unknown, never zero. `capabilities.volume` is false when absent; it becomes true only for an explicitly supported, active, nonrestricted player with control permission. A known volume alone does not grant permission. The Spotify endpoint requires Premium and `user-modify-playback-state` authorization. Local codec volume and Spotify player volume are separate controls.
 
@@ -36,7 +39,7 @@ Before a guarded command, the companion checks fresh upstream target/capability 
 
 Keep only the newest unsent slider value in a separate pending slot. The companion permits at most one volume dispatch per second, honors upstream `Retry-After`, and never replays control writes after a 401, 429 or ambiguous transport result. Wait for observed playback to confirm volume; an accepted command does not update cached volume optimistically. Unknown volume may show an unavailable indicator while a supported absolute control remains usable.
 
-Success is HTTP 200 with `{"ok":true}`. It means the command was accepted, not that the downstream player has already changed. Fetch playback again. Errors are `{"error":{"code":"invalid_control","message":"..."}}`, bounded to 1024 bytes. Codes/statuses: invalid_json or invalid_control (400), unauthorized (401), forbidden or restricted (403), unsupported or target_changed (409), too_large (413), content_type (415), rate_limited (429), internal_error (500), upstream_error (502), not_authorized or no_device (503). Rate limits include Retry-After. The narrow gateway preserves HTTP error status and bounded Retry-After while replacing upstream error text. Never retry controls automatically after ambiguous transport failure.
+Success is HTTP 200 with `{"ok":true,"result":"accepted"}`; legacy replies without `result` remain accepted. Seek adds the effective `position_ms`. It means the command was accepted, not that the downstream player has already changed. Fetch playback again. Errors are `{"error":{"code":"invalid_control","message":"..."}}`, bounded to 1024 bytes. Codes/statuses: invalid_json or invalid_control (400), unauthorized (401), forbidden or restricted (403), unsupported, target_changed or track_changed (409), too_large (413), content_type (415), rate_limited (429), internal_error (500), upstream_error (502), not_authorized or no_device (503). Rate limits include Retry-After. The narrow gateway preserves approved error codes, HTTP status and bounded Retry-After while replacing upstream error text. Never retry controls automatically after ambiguous transport failure.
 
 Use `Authorization: Bearer <device token>` on both endpoints and artwork when configured. The token is local device authentication, never a Spotify token. No query-string token is supported.
 

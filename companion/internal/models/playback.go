@@ -35,6 +35,7 @@ type Capabilities struct {
 	Shuffle  bool `json:"shuffle"`
 	Repeat   bool `json:"repeat"`
 	Volume   bool `json:"volume"`
+	Seek     bool `json:"seek"`
 }
 
 func (c Capabilities) Allows(action string) bool {
@@ -53,29 +54,34 @@ func (c Capabilities) Allows(action string) bool {
 		return c.Repeat
 	case "volume":
 		return c.Volume
+	case "seek":
+		return c.Seek
 	}
 	return false
 }
 
 type Playback struct {
-	SchemaVersion int          `json:"schema_version"`
-	State         string       `json:"state"`
-	TrackID       string       `json:"track_id"`
-	Title         string       `json:"title"`
-	Artist        string       `json:"artist"`
-	Album         string       `json:"album"`
-	Context       Context      `json:"context"`
-	ProgressMS    int64        `json:"progress_ms"`
-	DurationMS    int64        `json:"duration_ms"`
-	UpdatedAtMS   int64        `json:"updated_at_ms"`
-	Shuffle       bool         `json:"shuffle"`
-	Repeat        string       `json:"repeat"`
-	Artwork       Artwork      `json:"artwork"`
-	Capabilities  Capabilities `json:"capabilities"`
-	VolumePercent *int         `json:"volume_percent"`
-	ControlTarget string       `json:"control_target"`
-	TextMask      *TextMask    `json:"text_mask,omitempty"`
-	Clock         *Clock       `json:"clock,omitempty"`
+	SchemaVersion int           `json:"schema_version"`
+	State         string        `json:"state"`
+	TrackID       string        `json:"track_id"`
+	Title         string        `json:"title"`
+	Artist        string        `json:"artist"`
+	Album         string        `json:"album"`
+	Context       Context       `json:"context"`
+	ProgressMS    int64         `json:"progress_ms"`
+	DurationMS    int64         `json:"duration_ms"`
+	UpdatedAtMS   int64         `json:"updated_at_ms"`
+	Shuffle       bool          `json:"shuffle"`
+	Repeat        string        `json:"repeat"`
+	Artwork       Artwork       `json:"artwork"`
+	Capabilities  Capabilities  `json:"capabilities"`
+	VolumePercent *int          `json:"volume_percent"`
+	ControlTarget string        `json:"control_target"`
+	ControlTrack  string        `json:"control_track,omitempty"`
+	TextMask      *TextMask     `json:"text_mask,omitempty"`
+	Clock         *Clock        `json:"clock,omitempty"`
+	Details       *Details      `json:"details,omitempty"`
+	OfflineReason OfflineReason `json:"offline_reason,omitempty"`
 }
 
 func Empty(state string) Playback {
@@ -101,6 +107,12 @@ func Text(s string, limit int) string {
 }
 
 func (p Playback) Bounded() Playback {
+	if p.Details != nil {
+		p.Details = p.Details.Bounded()
+	}
+	if !p.OfflineReason.Valid() {
+		p.OfflineReason = ""
+	}
 	if p.Clock != nil {
 		clock := *p.Clock
 		p.Clock = nil
@@ -136,7 +148,9 @@ func (p Playback) Bounded() Playback {
 		p.Capabilities = Capabilities{}
 		p.VolumePercent = nil
 		p.ControlTarget = ""
+		p.ControlTrack = ""
 		p.TextMask = nil
+		p.Details = nil
 	}
 	if p.VolumePercent != nil {
 		value := *p.VolumePercent
@@ -149,6 +163,10 @@ func (p Playback) Bounded() Playback {
 		p.ControlTarget = ""
 		p.Capabilities.Volume = false
 	}
+	if !ValidControlTarget(p.ControlTrack) || p.ControlTarget == "" || p.TrackID == "" || p.DurationMS <= 0 {
+		p.ControlTrack = ""
+		p.Capabilities.Seek = false
+	}
 	return p
 }
 
@@ -156,6 +174,7 @@ type Control struct {
 	Action        string          `json:"action"`
 	Value         json.RawMessage `json:"value,omitempty"`
 	ControlTarget string          `json:"control_target,omitempty"`
+	ControlTrack  string          `json:"control_track,omitempty"`
 }
 
 func ValidControlTarget(value string) bool {
@@ -165,6 +184,9 @@ func ValidControlTarget(value string) bool {
 }
 
 func (c Control) Validate() error {
+	if c.ControlTrack != "" && (c.Action != "seek" || !ValidControlTarget(c.ControlTrack)) {
+		return fmt.Errorf("invalid control track")
+	}
 	if c.ControlTarget != "" && !ValidControlTarget(c.ControlTarget) {
 		return fmt.Errorf("invalid control target")
 	}
@@ -186,6 +208,12 @@ func (c Control) Validate() error {
 		var value int
 		raw := strings.TrimSpace(string(c.Value))
 		if ValidControlTarget(c.ControlTarget) && raw != "" && raw[0] >= '0' && raw[0] <= '9' && json.Unmarshal(c.Value, &value) == nil && value >= 0 && value <= 100 {
+			return nil
+		}
+	case "seek":
+		var value int64
+		raw := strings.TrimSpace(string(c.Value))
+		if ValidControlTarget(c.ControlTarget) && ValidControlTarget(c.ControlTrack) && raw != "" && raw[0] >= '0' && raw[0] <= '9' && json.Unmarshal(c.Value, &value) == nil && value >= 0 && value <= MaxDuration {
 			return nil
 		}
 	}

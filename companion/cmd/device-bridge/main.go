@@ -23,17 +23,23 @@ func run() error {
 		return err
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	var masks *textmask.Store
+	var details *textmask.DetailStore
 	if cfg.TextMasks {
 		masks, err = textmask.New()
 		if err != nil {
 			return err
 		}
 		defer masks.Close()
+		details, err = textmask.NewDetails(ctx)
+		if err != nil {
+			return err
+		}
+		defer details.Close()
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	srv := &http.Server{Addr: cfg.Bind, Handler: devicebridge.NewWithMasks(cfg, log, masks), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	srv := &http.Server{Addr: cfg.Bind, Handler: devicebridge.NewWithDetails(cfg, log, masks, details), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	var workers sync.WaitGroup
 	workers.Go(func() {
 		<-ctx.Done()

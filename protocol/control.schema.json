@@ -5,6 +5,7 @@
     {"type":"object","required":["action"],"properties":{"action":{"enum":["play","pause","previous","next"]},"control_target":{"type":"string","pattern":"^[0-9a-f]{32}$"}},"additionalProperties":false},
     {"type":"object","required":["action","value"],"properties":{"action":{"const":"shuffle"},"value":{"type":"boolean"},"control_target":{"type":"string","pattern":"^[0-9a-f]{32}$"}},"additionalProperties":false},
     {"type":"object","required":["action","value"],"properties":{"action":{"const":"repeat"},"value":{"enum":["off","context","track"]},"control_target":{"type":"string","pattern":"^[0-9a-f]{32}$"}},"additionalProperties":false},
-    {"type":"object","required":["action","value","control_target"],"properties":{"action":{"const":"volume"},"value":{"type":"integer","minimum":0,"maximum":100},"control_target":{"type":"string","pattern":"^[0-9a-f]{32}$"}},"additionalProperties":false}
+    {"type":"object","required":["action","value","control_target"],"properties":{"action":{"const":"volume"},"value":{"type":"integer","minimum":0,"maximum":100},"control_target":{"type":"string","pattern":"^[0-9a-f]{32}$"}},"additionalProperties":false},
+    {"type":"object","required":["action","value","control_target","control_track"],"properties":{"action":{"const":"seek"},"value":{"type":"integer","minimum":0,"maximum":86400000},"control_target":{"type":"string","pattern":"^[0-9a-f]{32}$"},"control_track":{"type":"string","pattern":"^[0-9a-f]{32}$"}},"additionalProperties":false}
   ]
 }

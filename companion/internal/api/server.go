@@ -211,6 +211,11 @@ func decodeControl(body io.Reader) (models.Control, error) {
 			if err == nil && !models.ValidControlTarget(c.ControlTarget) {
 				err = errors.New("invalid control target")
 			}
+		case "control_track":
+			err = d.Decode(&c.ControlTrack)
+			if err == nil && !models.ValidControlTarget(c.ControlTrack) {
+				err = errors.New("invalid control track")
+			}
 		default:
 			return c, errors.New("unknown key")
 		}
@@ -248,14 +253,23 @@ func (s *server) control(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = c.Validate(); err != nil {
-		problem(w, models.Problem("invalid_control", 400, "use a supported action and value; volume needs integer 0..100 and the current control_target"))
+		problem(w, models.Problem("invalid_control", 400, "check the action and integer bounds; seek requires current target and track guards"))
 		return
 	}
-	if e := s.player.Control(r.Context(), c); e != nil {
+	result := models.Accepted()
+	var controlErr *models.ServiceError
+	if player, ok := s.player.(interface {
+		ControlWithResult(context.Context, models.Control) (models.ControlResult, *models.ServiceError)
+	}); ok {
+		result, controlErr = player.ControlWithResult(r.Context(), c)
+	} else {
+		controlErr = s.player.Control(r.Context(), c)
+	}
+	if e := controlErr; e != nil {
 		problem(w, e)
 		return
 	}
-	jsonReply(w, 200, map[string]bool{"ok": true})
+	jsonReply(w, 200, result)
 }
 func (s *server) artwork(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")

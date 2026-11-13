@@ -17,9 +17,12 @@
     "artwork":{"type":"object","required":["url","width","height"],"additionalProperties":false,"properties":{"url":{"type":"string","maxLength":256},"width":{"type":"integer","minimum":0,"maximum":240},"height":{"type":"integer","minimum":0,"maximum":240}}},
     "volume_percent":{"type":["integer","null"],"minimum":0,"maximum":100},
     "control_target":{"type":"string","pattern":"^(|[0-9a-f]{32})$"},
+    "control_track":{"type":"string","pattern":"^[0-9a-f]{32}$"},
+    "offline_reason":{"enum":["login_required","no_active_player","restricted","rate_limited","upstream_unavailable","wallet_locked","wallet_unavailable","stale"]},
+    "details":{"type":"object","required":["layout","id"],"additionalProperties":false,"properties":{"layout":{"const":1},"id":{"$ref":"#/$defs/digest"},"title":{"$ref":"#/$defs/detail_field"},"artist":{"$ref":"#/$defs/detail_field"},"album":{"$ref":"#/$defs/detail_field"},"context":{"$ref":"#/$defs/detail_field"}}},
     "clock":{"type":"object","required":["unix_ms","utc_offset_min"],"additionalProperties":false,"properties":{"unix_ms":{"type":"integer","minimum":946684800000,"maximum":4102444799999},"utc_offset_min":{"type":"integer","minimum":-840,"maximum":840}}},
     "text_mask":{"type":"object","required":["url","layout"],"additionalProperties":false,"properties":{"url":{"type":"string","pattern":"^/v1/text/[0-9a-f]{64}$"},"layout":{"const":1}}},
-    "capabilities":{"type":"object","required":["play","pause","previous","next","shuffle","repeat"],"additionalProperties":false,"properties":{"play":{"type":"boolean"},"pause":{"type":"boolean"},"previous":{"type":"boolean"},"next":{"type":"boolean"},"shuffle":{"type":"boolean"},"repeat":{"type":"boolean"},"volume":{"type":"boolean"}}}
+    "capabilities":{"type":"object","required":["play","pause","previous","next","shuffle","repeat"],"additionalProperties":false,"properties":{"play":{"type":"boolean"},"pause":{"type":"boolean"},"previous":{"type":"boolean"},"next":{"type":"boolean"},"shuffle":{"type":"boolean"},"repeat":{"type":"boolean"},"volume":{"type":"boolean"},"seek":{"type":"boolean"}}}
   },
-  "$defs":{"text":{"type":"string","maxLength":256}}
+  "$defs":{"text":{"type":"string","maxLength":256},"digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},"detail_field":{"type":"object","required":["pages","flags"],"additionalProperties":false,"properties":{"pages":{"type":"array","maxItems":4,"items":{"$ref":"#/$defs/digest"}},"flags":{"type":"integer","minimum":0,"maximum":3}},"if":{"properties":{"pages":{"maxItems":0}}},"then":{"properties":{"flags":{"const":0}}}}}
 }

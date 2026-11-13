@@ -138,10 +138,126 @@ done:
     pango_font_description_free(font); g_object_unref(layout); g_free(value);
     return result;
 }
+
+static int detail_cuts(PangoLayout *layout, const char *value, int *cuts) {
+    int length = strlen(value), count = 0, attr_count = 0;
+    unsigned char clusters[1025] = {0};
+    clusters[0] = clusters[length] = 1;
+    for (GSList *line = pango_layout_get_lines_readonly(layout); line; line = line->next)
+        for (GSList *run = ((PangoLayoutLine *)line->data)->runs; run; run = run->next) {
+            PangoGlyphItem *item = run->data;
+            for (int n = 0; n < item->glyphs->num_glyphs; n++) {
+                int offset = item->item->offset + item->glyphs->log_clusters[n];
+                if (offset >= 0 && offset <= length) clusters[offset] = 1;
+            }
+        }
+    const PangoLogAttr *attrs = pango_layout_get_log_attrs_readonly(layout, &attr_count);
+    const char *cursor = value;
+    for (int n = 0; n < attr_count; n++) {
+        int offset = cursor - value;
+        if (attrs[n].is_cursor_position && clusters[offset]) cuts[count++] = offset;
+        if (!*cursor) break;
+        cursor = g_utf8_next_char(cursor);
+    }
+    return count;
+}
+
+static int detail_ink_fits(PangoLayout *layout, const unsigned char *safe, int retained) {
+    for (GSList *it = pango_layout_get_lines_readonly(layout); it; it = it->next) {
+        PangoLayoutLine *line = it->data;
+        PangoRectangle ink;
+        pango_layout_line_get_pixel_extents(line, &ink, NULL);
+        int end = line->start_index + line->length;
+        if (ink.width > 216 || ink.height > 24 ||
+            (line->start_index < retained && !safe[line->start_index]) ||
+            (end < retained && !safe[end])) return 0;
+    }
+    return 1;
+}
+
+static int text_detail(TextEngine *e, const char *input, int tail,
+                       unsigned char *output, int *pages, int *flags) {
+    int result = 3;
+    char *value = g_utf8_normalize(input, -1, G_NORMALIZE_DEFAULT_COMPOSE);
+    if (!value) return result;
+    int length = strlen(value);
+    if (length > 1024) { g_free(value); return result; }
+    PangoLayout *layout = pango_layout_new(e->context);
+    PangoFontDescription *font = pango_font_description_new();
+    gboolean bengali = FALSE;
+    for (const char *p = value; *p; p = g_utf8_next_char(p)) {
+        gunichar c = g_utf8_get_char(p);
+        if (c >= 0x0980 && c <= 0x09ff) bengali = TRUE;
+    }
+    pango_font_description_set_family(font, bengali ? "Noto Sans Bengali,Noto Sans CJK JP" : "Noto Sans CJK JP,Noto Sans Bengali");
+    pango_context_set_language(pango_layout_get_context(layout), pango_language_from_string(bengali ? "bn" : "ja"));
+    pango_layout_set_auto_dir(layout, FALSE);
+    pango_layout_set_single_paragraph_mode(layout, TRUE);
+    pango_layout_set_text(layout, value, length);
+    pango_font_description_set_absolute_size(font, 15 * PANGO_SCALE);
+    pango_layout_set_font_description(layout, font);
+    if (pango_layout_get_unknown_glyphs_count(layout)) { result = 1; goto detail_done; }
+    int cuts[1025], count = detail_cuts(layout, value, cuts);
+    if (!count || cuts[0] != 0 || cuts[count - 1] != length) goto detail_done;
+    unsigned char safe[1025] = {0};
+    for (int n = 0; n < count; n++) safe[cuts[n]] = 1;
+    if (tail && count > 1) count--;
+    *flags = tail ? 1 : 0;
+    char candidate[1028];
+    pango_layout_set_width(layout, 216 * PANGO_SCALE);
+    pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+    int chosen = -1;
+    for (int pixels = 15; pixels >= 11 && chosen < 0; pixels--) {
+        pango_font_description_set_absolute_size(font, pixels * PANGO_SCALE);
+        pango_layout_set_font_description(layout, font);
+        text_candidate(candidate, value, cuts[count - 1], length);
+        pango_layout_set_text(layout, candidate, -1);
+        if (!detail_ink_fits(layout, safe, cuts[count - 1])) continue;
+        if (pango_layout_get_line_count(layout) <= 16) { chosen = cuts[count - 1]; break; }
+        for (int n = count - 2; n >= 0; n--) {
+            text_candidate(candidate, value, cuts[n], length);
+            pango_layout_set_text(layout, candidate, -1);
+            if (pango_layout_get_line_count(layout) <= 16 && detail_ink_fits(layout, safe, cuts[n])) {
+                chosen = cuts[n]; *flags |= 2; break;
+            }
+        }
+    }
+    if (chosen < 0) { result = 2; goto detail_done; }
+    *pages = (pango_layout_get_line_count(layout) + 3) / 4;
+    if (*pages < 1 || *pages > 4) goto detail_done;
+    GSList *line = pango_layout_get_lines_readonly(layout);
+    for (int page = 0; page < *pages; page++) {
+        cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_A8, 216, 96);
+        cairo_t *cr = cairo_create(surface);
+        cairo_set_source_rgba(cr, 1, 1, 1, 1);
+        for (int row = 0; row < 4 && line; row++, line = line->next) {
+            PangoRectangle ink;
+            PangoLayoutLine *current = line->data;
+            pango_layout_line_get_pixel_extents(current, &ink, NULL);
+            cairo_move_to(cr, (216 - ink.width) / 2 - ink.x, row * 24 + (24 - ink.height) / 2 - ink.y);
+            pango_cairo_show_layout_line(cr, current);
+        }
+        cairo_surface_flush(surface);
+        if (cairo_status(cr) != CAIRO_STATUS_SUCCESS || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+            cairo_destroy(cr); cairo_surface_destroy(surface); goto detail_done;
+        }
+        unsigned char *pixels = cairo_image_surface_get_data(surface);
+        int stride = cairo_image_surface_get_stride(surface);
+        for (int y = 0; y < 96; y++)
+            for (int x = 0; x < 216; x += 2)
+                output[page * 10368 + (y * 216 + x) / 2] = ((pixels[y * stride + x] + 8) / 17 << 4) | ((pixels[y * stride + x + 1] + 8) / 17);
+        cairo_destroy(cr); cairo_surface_destroy(surface);
+    }
+    result = 0;
+detail_done:
+    pango_font_description_free(font); g_object_unref(layout); g_free(value);
+    return result;
+}
 */
 import "C"
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -228,4 +344,42 @@ func (r *nativeRenderer) renderLine(value string, slot Slot) ([]byte, lineInfo, 
 		return nil, info, fmt.Errorf("metadata ink cannot fit supported bounds")
 	}
 	return data, info, nil
+}
+
+func (r *nativeRenderer) RenderDetail(ctx context.Context, value string) ([][]byte, int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if len(value) == 0 || len(value) > 256 || !utf8.ValidString(value) || strings.IndexFunc(value, func(c rune) bool { return c < 32 || c == 127 }) >= 0 {
+		return nil, 0, fmt.Errorf("invalid detail text bounds")
+	}
+	tail := C.int(0)
+	if len(value) >= 253 {
+		tail = 1
+	}
+	value = strings.Map(func(c rune) rune {
+		if c >= 'A' && c <= 'Z' {
+			return c + ('a' - 'A')
+		}
+		return c
+	}, value)
+	text := C.CString(value)
+	defer C.free(unsafe.Pointer(text))
+	data := make([]byte, 4*DetailPayload)
+	var pages, flags C.int
+	result := C.text_detail(r.engine, text, tail, (*C.uchar)(unsafe.Pointer(&data[0])), &pages, &flags)
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if result == 1 {
+		return nil, 0, ErrCoverage
+	}
+	if result != 0 || pages < 1 || pages > 4 {
+		return nil, 0, fmt.Errorf("detail ink cannot fit supported bounds")
+	}
+	planes := make([][]byte, int(pages))
+	for i := range planes {
+		planes[i] = data[i*DetailPayload : (i+1)*DetailPayload]
+	}
+	return planes, int(flags), nil
 }

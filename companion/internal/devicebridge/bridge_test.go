@@ -169,7 +169,8 @@ func TestFixturePlaybackArtworkAndAllControls(t *testing.T) {
 		r.Header.Set("Idempotency-Key", "private-replay-marker")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
-		if w.Code != 200 || w.Body.String() != `{"ok":true}` {
+		var reply models.ControlResult
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &reply) != nil || !reply.OK || reply.Result != "accepted" {
 			t.Fatalf("fixture control %s: %d %s", body, w.Code, w.Body.String())
 		}
 	}

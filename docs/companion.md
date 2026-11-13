@@ -60,6 +60,7 @@ Every route requires the separate device bearer. Only these method/path pairs ar
 
 - `GET /v1/playback`
 - `POST /v1/control`
+- `GET /v1/detail/<digest>` when text shaping is enabled
 - `GET /v1/artwork/<id>`, with 1..128 letters, digits, underscores or hyphens
 
 The gateway exposes no home, status, login or callback route. It rejects query strings, encoded paths, arbitrary origins and all browser Origin/Fetch-Metadata requests, including `Origin: null` with spoofed same-origin metadata. Host must match the configured numeric address and port. There is no CORS allowance. Caller headers cannot select another upstream. Redirects are rejected and control requests are never replayed by the gateway, including after ambiguous connection failure. The companion may refresh and retry an unauthorized GET once; control writes are never replayed.
@@ -165,13 +166,63 @@ The efficiency upgrade requires a tested companion and gateway pair. Stage immut
 
 ## Limits and status
 
+The [daily-use protocol](../protocol/usability.md) adds guarded seek, explicit
+availability reasons and paginated name details. Seek requires fresh target and
+track generations, a known positive duration, control permission and an
+unrestricted active music player. The host rechecks these facts immediately
+before a device-pinned write and clamps below the duration to avoid advancing
+tracks. Attempts are spaced at least one second apart; 429 responses and
+ambiguous writes are never replayed. Another controller can still change the
+track between Spotify's GET and PUT. A successful reply reports acceptance and
+the effective position, while the next observed snapshot supplies confirmation.
+Use a deliberate user drag for live verification; automated tests use fixtures.
+
+With `BOTTIE_BRIDGE_TEXT_MASKS=true`, a separate worker also prepares detail
+pages for song, artist, album and named-playlist fields. It publishes only
+complete descriptors matching the exact bounded metadata and track identity.
+There are at most four 216x96 A4 pages per field, four cached identities, one
+worker and one replaceable pending job. One page is 10384 bytes. Eight response
+slots bound slow-reader copies even during eviction. The complete snapshot must
+fit both 8192 bytes and 256 parser tokens, otherwise the optional descriptor is
+omitted. Existing BTXT closed-screen masks and their pixels are unchanged.
+
+Details use the same pinned fonts and measured glyph boundaries. The host
+marks either four-page overflow or an uncertain 253..256-byte source tail;
+the card must show that a name is partial. Original metadata remains exact.
+`go run ./cmd/detail-fixtures /tmp/bottie-detail-fixtures` generates fictional
+shaped examples for native review, without a Spotify connection. Optional
+shaping cannot block metadata or controls; cancellation finishes the bounded
+current native shaping call before discarding its output. Font caches and
+shaping scratch are accounted separately from the 913792-byte live page-payload
+ceiling documented in the protocol.
+
+On the commissioning host (Ryzen 5 5600X, pinned fonts/runtime), three warm
+100-iteration `BenchmarkDetailLayout` runs had median per-field times of
+0.158 ms for the Bengali corpus, 0.101 ms for Japanese and 10.30 ms for a
+252-character four-page overflow case. Go allocations were approximately
+49 KiB per field, excluding native font/shaping allocations. These are host
+measurements, not device latency or scheduling guarantees. Run the benchmark
+with `go test -run '^$' -bench '^BenchmarkDetailLayout$' -benchtime=100x -count=3 -benchmem ./internal/textmask`.
+
+This daily-use release requires the companion and gateway to move together.
+Keep the signed-in memory runtime until the complete replacement, independent
+review and protected-wallet prerequisites are ready. Preserve exact release
+binaries, private configuration and user-unit overrides for rollback. Stop the
+owning units deliberately before replacing ExecStart paths. Select protected
+storage only after the native wallet's nonempty-password protection and scoped
+encrypted synthetic probe are established. One Connect Spotify on that new
+process then seeds only this application's entry; a controlled restart must
+demonstrate fresh refresh-token restoration. Package installation or an active
+unit alone does not prove that gate. Do not seed the old memory process or
+claim transparent reboot unlock before the native login path is verified.
+
 Bengali and Japanese song, artist, album and playlist names can use the gateway's optional [BTXT metadata masks](../protocol/text-mask.md). The original JSON strings remain unchanged. ASCII and the existing normalized punctuation keep the device pixel font. No menu translation or language selector is added.
 
 Set `BOTTIE_BRIDGE_TEXT_MASKS=true` only for a gateway built with Linux/cgo, `pangocairo` and `pangofc` development libraries. Startup verifies the exact installed font files and hashes documented in the protocol, creates a private Fontconfig font map containing only those fonts, and checks Bengali/Japanese coverage. The CJK collection on the commissioning host has no package owner; its embedded OFL notice, face 0 identity and exact file hash were verified. No font download, shell text rendering or external font service is used. Missing or changed fonts stop an enabled gateway with an actionable error; there is no silent font substitution.
 
 The gateway adds `text_mask` to eligible playback snapshots and serves authenticated `GET /v1/text/<digest>`. It rejects caller-supplied text, font paths, dimensions, queries and foreign origins. Each bundle is at most 8,494 bytes. Eight cached bundles expire after five minutes; shaping is serialized, with fixed input and pixel bounds, and does not run per device frame. Initial local measurements were approximately 27 ms to initialize and warm both fonts, then 8 ms for 40 warm line renders. These are host measurements, not hard scheduling guarantees. Pango/HarfBuzz glyph caches and host font memory are separate from the bounded response cache. The device needs only the masks, not the roughly 19 MB Japanese font collection.
 
-For this extension, build and replace **only** `cmd/device-bridge` after tests. Keep the existing companion process, bind, bearer file and OAuth session unchanged. The old firmware accepts the additive descriptor and ignores it; upgraded firmware validates the digest, geometry and metadata identity before using a mask. Keep a verified previous gateway binary for rollback. This transition does not activate desktop units, change protected-login storage or require a new Spotify login. After gateway startup, check existing authorization read-only and compare a returned mask with the expected SHA-256. Never restart the companion as part of this gateway-only transition.
+For a BTXT-only upgrade, build and replace **only** `cmd/device-bridge` after tests. Keep the existing companion process, bind, bearer file and OAuth session unchanged. The old firmware accepts the additive descriptor and ignores it; upgraded firmware validates the digest, geometry and metadata identity before using a mask. Keep a verified previous gateway binary for rollback. This narrower transition does not activate protected-login storage or require a new Spotify login. The daily-use seek/storage upgrade above requires the tested pair instead.
 
 The loopback `/status` response includes a `device` object in Spotify mode: nullable `active`, `restricted`, `supports_volume`, `volume_percent`, plus `updated_at_ms` and `fresh`. It exposes no device name, ID or account token, and the LAN gateway does not serve it. Read `fresh=true`, `active=true`, `restricted=false`, and `supports_volume=true` together with playback `capabilities.volume=true` before enabling Spotify volume. Missing or stale evidence remains unavailable. Alexa integration alone does not establish Web API volume support.
 
@@ -209,4 +260,4 @@ go test -race ./...
 
 Tests use original fixtures, fake clocks, local HTTP upstreams and in-memory transports. They exercise authentication, one-use/expired OAuth state, PKCE exchange, refresh retention/rotation, restrictions, backoff, bounded metadata, JSON validation, trusted image origins, aspect fit and cache limits. For combined device-core verification see [integration](integration.md). No live credentials are required.
 
-Storage tests cover fresh-process refresh, rotation, revocation and failed cleanup/save retry, locked/unavailable storage, and cancellation. Startup tests exercise delayed address availability, occupied ports and shutdown cancellation. The desktop adapter probe is opt-in: `env BOTTIE_TEST_KEYRING=1 go test -run '^TestDesktopKeyring$' -v ./internal/credentials`. Run it only after the protected default wallet is ready. It uses one random Bottie test identity, checks encrypted transfer and a fresh-session roundtrip, rotates a synthetic value, then deletes it. It never searches another application's entries.
+Storage tests cover fresh-process refresh, rotation, revocation and failed cleanup/save retry, locked/unavailable storage, cancellation, and an older held rotation/deletion followed by a new authorization grant. Startup tests exercise delayed address availability, occupied ports and shutdown cancellation. The desktop adapter probe is opt-in: `env BOTTIE_TEST_KEYRING=1 go test -run '^TestDesktopKeyring$' -v ./internal/credentials`. Run it only after the protected default wallet is ready. It uses one random Bottie test identity, checks encrypted transfer and a fresh-session roundtrip, rotates a synthetic value, then deletes it. It never searches another application's entries.

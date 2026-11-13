@@ -5,11 +5,104 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"bottie/companion/internal/credentials"
 )
+
+type heldStore struct {
+	memoryStore
+	entered   chan struct{}
+	release   chan struct{}
+	blockSave bool
+}
+
+func (s *heldStore) Save(ctx context.Context, r credentials.Record) error {
+	if s.blockSave && r.RefreshToken == "old-rotation" {
+		close(s.entered)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.memoryStore.Save(ctx, r)
+}
+
+func (s *heldStore) Delete(ctx context.Context) error {
+	if !s.blockSave {
+		close(s.entered)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.memoryStore.Delete(ctx)
+}
+
+func TestProtectedOldRefreshCannotOverwriteNewGrant(t *testing.T) {
+	for _, mode := range []string{"rotation", "revocation"} {
+		t.Run(mode, func(t *testing.T) {
+			var newGrants atomic.Int32
+			p, _ := fakePlayer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/token" {
+					w.WriteHeader(204)
+					return
+				}
+				_ = r.ParseForm()
+				if r.Form.Get("grant_type") == "authorization_code" {
+					newGrants.Add(1)
+					_, _ = io.WriteString(w, `{"access_token":"new-access","refresh_token":"new-grant","expires_in":3600,"token_type":"Bearer","scope":"user-read-playback-state user-modify-playback-state"}`)
+				} else if mode == "revocation" {
+					w.WriteHeader(400)
+					_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+				} else {
+					_, _ = io.WriteString(w, `{"access_token":"old-access","refresh_token":"old-rotation","expires_in":3600,"token_type":"Bearer"}`)
+				}
+			})
+			s := &heldStore{memoryStore: memoryStore{record: saved()}, entered: make(chan struct{}), release: make(chan struct{}), blockSave: mode == "rotation"}
+			defer func() {
+				select {
+				case <-s.release:
+				default:
+					close(s.release)
+				}
+			}()
+			p.store = s
+			_, state, err := p.Begin(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			pollDone := make(chan struct{})
+			go func() { p.Poll(context.Background()); close(pollDone) }()
+			select {
+			case <-s.entered:
+			case <-time.After(time.Second):
+				t.Fatal("old protected operation not held")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+			if p.Complete(ctx, state, state, "new-code", "") == nil {
+				t.Fatal("callback passed blocked old operation")
+			}
+			cancel()
+			if newGrants.Load() != 0 {
+				t.Fatal("new grant exchanged out of order")
+			}
+			close(s.release)
+			<-pollDone
+			if err := p.Complete(context.Background(), state, state, "new-code", ""); err != nil {
+				t.Fatal(err)
+			}
+			p.Poll(context.Background())
+			if newGrants.Load() != 1 || s.record.RefreshToken != "new-grant" || p.tokens.refresh != "new-grant" || p.AuthorizationStatus().Storage != "saved" || !p.AuthorizationStatus().Authorized {
+				t.Fatal("late old rotation or deletion replaced newest grant")
+			}
+		})
+	}
+}
 
 type memoryStore struct {
 	record                  credentials.Record

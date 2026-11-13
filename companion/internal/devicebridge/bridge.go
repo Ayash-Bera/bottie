@@ -29,12 +29,13 @@ const maxJSON = 8192
 const maxArtwork = 16 + 96*96*2
 
 type bridge struct {
-	cfg    config.Bridge
-	client *http.Client
-	log    *slog.Logger
-	slots  chan struct{}
-	masks  *textmask.Store
-	now    func() time.Time
+	cfg     config.Bridge
+	client  *http.Client
+	log     *slog.Logger
+	slots   chan struct{}
+	masks   *textmask.Store
+	details *textmask.DetailStore
+	now     func() time.Time
 }
 
 func New(cfg config.Bridge, log *slog.Logger) http.Handler {
@@ -43,6 +44,10 @@ func New(cfg config.Bridge, log *slog.Logger) http.Handler {
 
 func NewWithMasks(cfg config.Bridge, log *slog.Logger, masks *textmask.Store) http.Handler {
 	return bridgeWithMasks(cfg, log, newTransport(), masks)
+}
+
+func NewWithDetails(cfg config.Bridge, log *slog.Logger, masks *textmask.Store, details *textmask.DetailStore) http.Handler {
+	return bridgeWithResources(cfg, log, newTransport(), masks, details, time.Now)
 }
 
 func newTransport() *http.Transport {
@@ -64,10 +69,14 @@ func bridgeWithMasks(cfg config.Bridge, log *slog.Logger, transport http.RoundTr
 }
 
 func bridgeWithClock(cfg config.Bridge, log *slog.Logger, transport http.RoundTripper, masks *textmask.Store, now func() time.Time) http.Handler {
+	return bridgeWithResources(cfg, log, transport, masks, nil, now)
+}
+
+func bridgeWithResources(cfg config.Bridge, log *slog.Logger, transport http.RoundTripper, masks *textmask.Store, details *textmask.DetailStore, now func() time.Time) http.Handler {
 	if cfg.ClockZone == nil {
 		cfg.ClockZone = time.FixedZone("Asia/Kolkata", 330*60)
 	}
-	b := &bridge{cfg: cfg, log: log, masks: masks, now: now, slots: make(chan struct{}, 8), client: &http.Client{
+	b := &bridge{cfg: cfg, log: log, masks: masks, details: details, now: now, slots: make(chan struct{}, 8), client: &http.Client{
 		Transport: transport,
 		Timeout:   8 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -80,6 +89,7 @@ func bridgeWithClock(cfg config.Bridge, log *slog.Logger, transport http.RoundTr
 	r.Post("/v1/control", b.forward)
 	r.Get("/v1/artwork/{id}", b.forward)
 	r.Get("/v1/text/{id}", b.text)
+	r.Get("/v1/detail/{id}", b.detail)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		problem(w, 404, "not_found", "device endpoint not found")
 	})
@@ -87,6 +97,25 @@ func bridgeWithClock(cfg config.Bridge, log *slog.Logger, transport http.RoundTr
 		problem(w, 405, "method_not_allowed", "method is not supported")
 	})
 	return r
+}
+
+func (b *bridge) detail(w http.ResponseWriter, r *http.Request) {
+	if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+		problem(w, 400, "invalid_body", "GET requests must have no body")
+		return
+	}
+	if b.details == nil {
+		problem(w, 404, "not_found", "detail page is not cached")
+		return
+	}
+	data, ok := b.details.Get(r.URL.Path)
+	if !ok {
+		problem(w, 404, "not_found", "detail page is not cached")
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
 }
 
 func (b *bridge) text(w http.ResponseWriter, r *http.Request) {
@@ -206,6 +235,40 @@ func decode(data []byte, v any) error {
 	return d.Decode(v)
 }
 
+func snapshotBudget(data []byte) bool {
+	if len(data) > maxJSON || !json.Valid(data) {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	count := 0
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return true
+		}
+		if err != nil {
+			return false
+		}
+		if delimiter, ok := token.(json.Delim); ok && (delimiter == '}' || delimiter == ']') {
+			continue
+		}
+		count++
+		if count > 256 {
+			return false
+		}
+	}
+}
+
+func encodeSnapshot(p models.Playback) ([]byte, error) {
+	data, err := json.Marshal(p)
+	if err == nil && !snapshotBudget(data) && p.Details != nil {
+		p.Details = nil
+		data, err = json.Marshal(p)
+	}
+	return data, err
+}
+
 func (b *bridge) forward(w http.ResponseWriter, r *http.Request) {
 	art := strings.HasPrefix(r.URL.Path, "/v1/artwork/")
 	if art && !artworkPath(r.URL.Path) {
@@ -259,7 +322,23 @@ func (b *bridge) forward(w http.ResponseWriter, r *http.Request) {
 		if status < 400 || status > 599 {
 			status = 502
 		}
-		problem(w, status, "upstream_error", "companion declined the device request; check its local status page")
+		code := "upstream_error"
+		media, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+		if media == "application/json" && resp.ContentLength <= 2048 && resp.Header.Get("Content-Encoding") == "" {
+			data, readErr := io.ReadAll(io.LimitReader(resp.Body, 2049))
+			var value struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if readErr == nil && len(data) <= 2048 && json.Unmarshal(data, &value) == nil {
+				switch value.Error.Code {
+				case "target_changed", "track_changed", "unsupported", "not_authorized", "keyring_locked", "keyring_unavailable", "keyring_invalid", "rate_limited", "restricted", "no_device", "invalid_control", "invalid_json":
+					code = value.Error.Code
+				}
+			}
+		}
+		problem(w, status, code, "companion declined the request; fetch playback or check its local status page")
 		return
 	}
 	limit, media := maxJSON, "application/json"
@@ -290,6 +369,12 @@ func (b *bridge) forward(w http.ResponseWriter, r *http.Request) {
 				valid = false
 			}
 			p = p.Bounded()
+			if p.OfflineReason == "" {
+				p.OfflineReason = models.ReasonFor(resp.Header.Get("X-Bottie-Status"))
+				if resp.Header.Get("X-Bottie-Status") == "ok" {
+					p.OfflineReason = ""
+				}
+			}
 			p.Clock = nil
 			now := b.now()
 			_, offset := now.In(b.cfg.ClockZone).Zone()
@@ -299,18 +384,24 @@ func (b *bridge) forward(w http.ResponseWriter, r *http.Request) {
 			}
 			// Only this gateway may advertise its locally generated bundles.
 			p.TextMask = nil
+			p.Details = nil
 			if valid && b.masks != nil {
 				p.TextMask, err = b.masks.Prepare(r.Context(), p)
 				if err != nil {
 					b.log.Warn("metadata text render unavailable")
 				}
 			}
-			data, err = json.Marshal(p)
-		} else {
-			var result struct {
-				OK bool `json:"ok"`
+			if valid && b.details != nil {
+				p.Details = b.details.Observe(p)
 			}
-			valid = decode(data, &result) == nil && result.OK
+			data, err = encodeSnapshot(p)
+			valid = valid && snapshotBudget(data)
+		} else {
+			var result models.ControlResult
+			valid = decode(data, &result) == nil && result.OK && (result.Result == "" || result.Result == "accepted")
+			if result.PositionMS != nil && (*result.PositionMS < 0 || *result.PositionMS >= models.MaxDuration) {
+				valid = false
+			}
 			data, err = json.Marshal(result)
 		}
 	}
@@ -319,7 +410,7 @@ func (b *bridge) forward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch status := resp.Header.Get("X-Bottie-Status"); status {
-	case "ok", "not_authorized", "restricted", "no_device", "rate_limited", "upstream_error":
+	case "ok", "not_authorized", "restricted", "no_device", "rate_limited", "upstream_error", "keyring_locked", "keyring_unavailable", "keyring_invalid":
 		w.Header().Set("X-Bottie-Status", status)
 	}
 	w.Header().Set("Content-Type", media)

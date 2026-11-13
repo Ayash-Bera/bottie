@@ -2,6 +2,7 @@ package fixture
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -10,13 +11,15 @@ import (
 )
 
 type Player struct {
-	mu     sync.Mutex
-	now    func() time.Time
-	last   time.Time
-	index  int
-	state  models.Playback
-	tracks []models.Playback
-	volume int
+	mu              sync.Mutex
+	now             func() time.Time
+	last            time.Time
+	index           int
+	state           models.Playback
+	tracks          []models.Playback
+	volume          int
+	trackGeneration uint64
+	seekAfter       time.Time
 }
 
 const target = "00000000000000000000000000000001"
@@ -33,7 +36,7 @@ func New(store *artwork.Store, now func() time.Time) (*Player, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Player{now: now, last: now(), volume: 40, tracks: []models.Playback{
+	p := &Player{now: now, last: now(), volume: 40, trackGeneration: 1, tracks: []models.Playback{
 		{TrackID: "fixture-orbit", Title: "Orbital Sunrise", Artist: "Bottie Ensemble", Album: "Small Worlds", Context: models.Context{Type: "playlist", Name: "Desk Orbits"}, DurationMS: 180000, Artwork: first},
 		{TrackID: "fixture-tide", Title: "Quiet Tides", Artist: "Bottie Ensemble", Album: "Moonwater", DurationMS: 210000, Artwork: second},
 		{TrackID: "fixture-signal", Title: "Distant Signal", Artist: "Bottie Ensemble", DurationMS: 150000},
@@ -45,6 +48,7 @@ func New(store *artwork.Store, now func() time.Time) (*Player, error) {
 }
 
 func (p *Player) selectTrack(index int) {
+	p.trackGeneration++
 	state, shuffle, repeat := p.state.State, p.state.Shuffle, p.state.Repeat
 	p.index = (index + len(p.tracks)) % len(p.tracks)
 	p.state = p.tracks[p.index]
@@ -90,8 +94,9 @@ func (p *Player) tick() {
 		}
 	}
 	p.state.UpdatedAtMS = now.UnixMilli()
-	p.state.Capabilities = models.Capabilities{Play: p.state.State != "playing", Pause: p.state.State == "playing", Previous: true, Next: true, Shuffle: true, Repeat: true, Volume: true}
+	p.state.Capabilities = models.Capabilities{Play: p.state.State != "playing", Pause: p.state.State == "playing", Previous: true, Next: true, Shuffle: true, Repeat: true, Volume: true, Seek: true}
 	p.state.ControlTarget = target
+	p.state.ControlTrack = fmt.Sprintf("%032x", p.trackGeneration)
 	p.state.VolumePercent = &p.volume
 	p.state = p.state.Bounded()
 }
@@ -103,17 +108,23 @@ func (p *Player) Snapshot() (models.Playback, *models.ServiceError) {
 	return p.state.Bounded(), nil
 }
 func (p *Player) Control(ctx context.Context, c models.Control) *models.ServiceError {
+	_, err := p.ControlWithResult(ctx, c)
+	return err
+}
+
+func (p *Player) ControlWithResult(ctx context.Context, c models.Control) (models.ControlResult, *models.ServiceError) {
+	result := models.Accepted()
 	if err := c.Validate(); err != nil {
-		return models.Problem("invalid_control", 400, "check action and value")
+		return models.ControlResult{}, models.Problem("invalid_control", 400, "check action and value")
 	}
 	if ctx.Err() != nil {
-		return models.Problem("upstream_error", 502, "request canceled")
+		return models.ControlResult{}, models.Problem("upstream_error", 502, "request canceled")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.tick()
 	if c.ControlTarget != "" && c.ControlTarget != target {
-		return models.Problem("target_changed", 409, "fixture target changed; fetch playback again")
+		return models.ControlResult{}, models.Problem("target_changed", 409, "fixture target changed; fetch playback again")
 	}
 	switch c.Action {
 	case "play":
@@ -141,6 +152,17 @@ func (p *Player) Control(ctx context.Context, c models.Control) *models.ServiceE
 		p.state.Repeat = c.String()
 	case "volume":
 		p.volume = c.Int()
+	case "seek":
+		if c.ControlTrack != p.state.ControlTrack {
+			return models.ControlResult{}, models.Problem("track_changed", 409, "fixture track changed; fetch playback again")
+		}
+		if p.now().Before(p.seekAfter) {
+			return models.ControlResult{}, &models.ServiceError{Code: "rate_limited", Status: 429, Message: "wait before another seek", RetryAfter: 1}
+		}
+		position := min(int64(c.Int()), p.state.DurationMS-1)
+		p.state.ProgressMS = position
+		result.PositionMS = &position
+		p.seekAfter = p.now().Add(time.Second)
 	}
-	return nil
+	return result, nil
 }

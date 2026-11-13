@@ -62,6 +62,7 @@ type Player struct {
 	device                                 DeviceStatus
 	targetID                               string
 	volumeAfter                            time.Time
+	seekAfter                              time.Time
 	assetJob                               *assetJob
 	assetWake                              chan struct{}
 	assetBackoff                           time.Time
@@ -108,6 +109,7 @@ func (p *Player) Snapshot() (models.Playback, *models.ServiceError) {
 	if e != nil {
 		copy := *e
 		e = &copy
+		s.OfflineReason = models.ReasonFor(e.Code)
 	}
 	age := p.now().UnixMilli() - s.UpdatedAtMS
 	if s.State != "unavailable" && (age < 0 || age > 15000) {
@@ -116,6 +118,10 @@ func (p *Player) Snapshot() (models.Playback, *models.ServiceError) {
 		s.ControlTarget = ""
 		s.VolumePercent = nil
 		e = unavailable()
+		s.OfflineReason = "stale"
+	}
+	if s.State == "idle" && s.OfflineReason == "" {
+		s.OfflineReason = "no_active_player"
 	}
 	return s.Bounded(), e
 }
@@ -133,6 +139,8 @@ func (p *Player) saveLocked(s models.Playback, e *models.ServiceError) {
 	if e != nil || p.cached.ControlTarget == "" {
 		p.cached.ControlTarget = ""
 		p.cached.Capabilities.Volume = false
+		p.cached.ControlTrack = ""
+		p.cached.Capabilities.Seek = false
 		p.targetID = ""
 	}
 }
@@ -443,7 +451,7 @@ func (u upstream) capabilities(control bool) models.Capabilities {
 			}
 		}
 	}
-	return models.Capabilities{Play: !u.Playing && !disallowed["resuming"], Pause: u.Playing && !disallowed["pausing"], Previous: !disallowed["skipping_prev"], Next: !disallowed["skipping_next"], Shuffle: !disallowed["toggling_shuffle"], Repeat: !disallowed["toggling_repeat_context"] && !disallowed["toggling_repeat_track"]}
+	return models.Capabilities{Play: !u.Playing && !disallowed["resuming"], Pause: u.Playing && !disallowed["pausing"], Previous: !disallowed["skipping_prev"], Next: !disallowed["skipping_next"], Shuffle: !disallowed["toggling_shuffle"], Repeat: !disallowed["toggling_repeat_context"] && !disallowed["toggling_repeat_track"], Seek: u.Item.ID != "" && len(u.Item.ID) <= 128 && u.Item.Duration > 0 && u.Item.Duration <= models.MaxDuration && !disallowed["seeking"]}
 }
 
 func playlistID(uri string) string {
@@ -524,7 +532,9 @@ func (p *Player) Poll(ctx context.Context) {
 		}
 	}
 	p.failures = 0
-	p.publishMetadata(ctx, s.Bounded(), u.Device, playlist, cover)
+	bounded := s.Bounded()
+	bounded.Capabilities.Seek = s.Capabilities.Seek
+	p.publishMetadata(ctx, bounded, u.Device, playlist, cover)
 }
 
 func (p *Player) Run(ctx context.Context, interval time.Duration) {
@@ -554,34 +564,46 @@ func (p *Player) Run(ctx context.Context, interval time.Duration) {
 }
 
 func (p *Player) Control(ctx context.Context, c models.Control) *models.ServiceError {
+	_, err := p.ControlWithResult(ctx, c)
+	return err
+}
+
+func (p *Player) ControlWithResult(ctx context.Context, c models.Control) (models.ControlResult, *models.ServiceError) {
+	result := models.Accepted()
 	if c.Validate() != nil {
-		return models.Problem("invalid_control", 400, "check action and value")
+		return models.ControlResult{}, models.Problem("invalid_control", 400, "check action and value")
 	}
 	if !p.acquire(ctx) {
-		return unavailable()
+		return models.ControlResult{}, unavailable()
 	}
 	defer p.release()
 	if e := p.deferred(); e != nil {
-		return e
+		return models.ControlResult{}, e
 	}
 	s, e := p.Snapshot()
 	if e != nil {
-		return e
+		return models.ControlResult{}, e
 	}
 	if c.ControlTarget != "" && c.ControlTarget != s.ControlTarget {
-		return targetChanged()
+		return models.ControlResult{}, targetChanged()
+	}
+	if c.Action == "seek" && c.ControlTrack != s.ControlTrack {
+		return models.ControlResult{}, trackChanged()
 	}
 	if !s.Capabilities.Allows(c.Action) {
-		return models.Problem("unsupported", 409, "this control is unavailable for the active playback device")
+		return models.ControlResult{}, models.Problem("unsupported", 409, "this control is unavailable for the active playback device")
 	}
 	if c.Action == "volume" && p.now().Before(p.volumeAfter) {
-		return &models.ServiceError{Code: "rate_limited", Status: 429, Message: "wait before another volume change", RetryAfter: 1}
+		return models.ControlResult{}, &models.ServiceError{Code: "rate_limited", Status: 429, Message: "wait before another volume change", RetryAfter: 1}
+	}
+	if c.Action == "seek" && p.now().Before(p.seekAfter) {
+		return models.ControlResult{}, &models.ServiceError{Code: "rate_limited", Status: 429, Message: "wait before another seek", RetryAfter: 1}
 	}
 	query := url.Values{}
 	if c.ControlTarget != "" {
-		id, e := p.checkTarget(ctx, c.Action)
+		id, e := p.checkTarget(ctx, c.Action, s)
 		if e != nil {
-			return e
+			return models.ControlResult{}, e
 		}
 		query.Set("device_id", id)
 	}
@@ -599,17 +621,23 @@ func (p *Player) Control(ctx context.Context, c models.Control) *models.ServiceE
 		query.Set("volume_percent", strconv.Itoa(c.Int()))
 		p.volumeAfter = p.now().Add(time.Second)
 	}
+	if c.Action == "seek" {
+		position := min(int64(c.Int()), s.DurationMS-1)
+		query.Set("position_ms", strconv.FormatInt(position, 10))
+		result.PositionMS = &position
+		p.seekAfter = p.now().Add(time.Second)
+	}
 	if len(query) != 0 {
 		path += "?" + query.Encode()
 	}
 	_, _, e = p.request(ctx, method, path)
 	if e != nil {
 		p.fail(e)
-		return e
+		return models.ControlResult{}, e
 	}
 	select {
 	case p.nudge <- struct{}{}:
 	default:
 	}
-	return nil
+	return result, nil
 }
