@@ -21,7 +21,6 @@ uint32_t noise(uint32_t value) {
     return value ^ (value >> 16);
 }
 struct Color { int r, g, b; };
-constexpr uint8_t bayer[] = {0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5};
 uint16_t color565(Color color, int shade = 256, int dither = 0) {
     return rgb(std::clamp(color.r * shade / 256 + dither, 0, 255) >> 3,
                std::clamp(color.g * shade / 256 + dither, 0, 255) >> 2,
@@ -174,95 +173,6 @@ void centered_text(Canvas& canvas, int y, const char* value, uint16_t color, int
     text(canvas, (canvas.frame.width - width)/2, y, value, (canvas.frame.width + width)/2, color, scale);
 }
 
-int surface_noise(int u, int v, unsigned shift, uint32_t seed) {
-    unsigned mask = (512U >> shift) - 1, cell = 1U << shift;
-    unsigned x = unsigned(u) >> shift, y = unsigned(v) >> shift;
-    int fx = (unsigned(u) & (cell-1)) * 256 / cell, fy = (unsigned(v) & (cell-1)) * 256 / cell;
-    fx = fx*fx*(768-2*fx)/65536; fy = fy*fy*(768-2*fy)/65536;
-    auto sample = [&](unsigned a, unsigned b) { return int(noise((a & mask) + (b & mask)*71 + seed) & 255); };
-    int a = sample(x,y), b = sample(x+1,y), c = sample(x,y+1), d = sample(x+1,y+1);
-    return (a*256 + (b-a)*fx + (c-a)*fy + (a-b-c+d)*fx*fy/256)/256;
-}
-
-void planet(Canvas& canvas, const Model& model, uint64_t now) {
-    static constexpr Color palettes[][6] = {
-        {{56,41,49},{103,66,57},{161,107,73},{191,136,91},{221,179,122},{238,211,162}},
-        {{23,44,72},{36,83,116},{66,127,153},{104,136,103},{169,179,145},{224,226,207}},
-        {{51,50,55},{85,83,82},{130,121,114},{164,155,136},{197,191,167},{228,220,199}},
-        {{36,61,88},{68,113,139},{113,155,175},{165,195,204},{208,225,220},{237,240,223}},
-        {{45,37,44},{73,52,54},{115,80,68},{174,105,69},{226,155,80},{242,203,112}},
-        {{45,40,63},{81,65,97},{125,96,141},{167,126,171},{198,163,195},{232,207,215}}
-    };
-    int cell = canvas.frame.width >= 200 ? 2 : 1;
-    int radius = std::min(canvas.frame.width*11/40, canvas.frame.height/3) / cell;
-    int cx = canvas.frame.width/2, cy = canvas.frame.height/2-4;
-    if (cy + radius*cell + cell <= canvas.top() || cy-radius*cell >= canvas.bottom()) return;
-    uint32_t seed = model.planet_seed, family = seed % 6;
-    int bias = int(noise(seed+31)%15)-7;
-    int rotation = int((now/140) % 512);
-    struct Crater { int u, v, r; };
-    Crater craters[8];
-    for (unsigned n = 0; n < 8; ++n) {
-        uint32_t hash = noise(seed + n*117);
-        craters[n] = {int(hash & 255)+128, int((hash>>8) & 255)+128, 10+int((hash>>16)%22)};
-    }
-    // Include the cell crossing a band edge, then let rect clip its rows.
-    int origin_y = cy-radius*cell;
-    int first = std::max(0,(canvas.top()-origin_y)/cell)-radius;
-    int last = std::min(radius*2,(canvas.bottom()-1-origin_y)/cell)-radius;
-    for (int y = first; y <= last; ++y) for (int x = -radius; x <= radius; ++x) {
-        int distance = x*x + y*y;
-        if (distance > radius*radius) continue;
-        int z = int(root(unsigned(radius*radius-distance)*256));
-        int u = (x*4096/(z+radius*16) + rotation + 256) & 511;
-        int v = (y*4096/(z+radius*16) + 256) & 511;
-        int broad = surface_noise(u,v,7,seed), medium = surface_noise(u,v,5,seed), fine = surface_noise(u,v,3,seed);
-        int terrain = (3*broad+2*medium+fine)/6;
-        int index = 3, relief = 256, emission = 0;
-        switch (family) {
-        case 0: case 5: {
-            int band = ((v*(family == 0 ? 3 : 2)+terrain/2) & 127);
-            band = std::min(band,127-band);
-            index = std::clamp(1+band/14,1,5);
-            int dx = u-300, dy = v-225;
-            if (dx*dx/3 + dy*dy*2 < 600) index = (dx*dx/3+dy*dy*2)/160+1;
-            break;
-        }
-        case 1:
-            index = terrain > 138 ? (fine > 125 ? 4 : 3) : terrain > 110 ? 2 : 1;
-            if ((medium*2+fine)/3 > 170 || std::abs(y)*10 > radius*9) index = 5;
-            break;
-        case 2:
-            index = fine > 130 ? 3 : 4;
-            for (const auto& crater : craters) {
-                int dx = ((u-crater.u+768)&511)-256, dy = v-crater.v;
-                int d = dx*dx+dy*dy, r2 = crater.r*crater.r;
-                if (d < r2) relief = relief*(160+70*d/r2)/256;
-                else if (d < r2*5/4) relief = relief*290/256;
-            }
-            break;
-        case 3:
-            index = terrain > 132 ? 4 : 3;
-            if (std::abs((medium+fine)/2-128) < 8) index = 1;
-            if (std::abs(y)*10 > radius*9) index = 5;
-            break;
-        default: {
-            int fissure = std::abs(terrain-128);
-            index = fine > 128 ? 1 : 0;
-            if (fissure < 12) { index = fissure < 5 ? 5 : 4; emission = 190; }
-            else if (fissure < 20) index = 2;
-            break;
-        }
-        }
-        int light = std::clamp((-x*148-y*82+z*194/16)/radius,0,256);
-        int shade = std::max(emission,(69+light*200/256)*relief/256);
-        Color color = palettes[family][index];
-        color.r += bias; color.g += bias; color.b += bias;
-        int dither = int(bayer[((y+radius)&3)*4+((x+radius)&3)])-8;
-        canvas.rect(cx+x*cell,cy+y*cell,cell,cell,color565(color,shade,dither/2));
-    }
-}
-
 void record(Canvas& canvas, int cx, int cy, int radius, Color tint, uint64_t now) {
     int cell = canvas.frame.width >= 200 ? 2 : 1;
     radius /= cell;
@@ -402,19 +312,21 @@ bool render(const Model& model, uint64_t now_ms, Frame frame, const Artwork* art
         controls(canvas,model,now_ms,accent);
     } else {
         canvas.rect(0,0,frame.width,frame.height,color565({10,16,17}));
-        static constexpr int stars[][2] = {{28,98},{182,90},{206,186},{40,210},{144,78},{192,226},{74,84},{16,166},{206,132},{64,226}};
-        for (unsigned n = 0; n < 10; ++n) {
-            int x = stars[n][0]*frame.width/240, y = stars[n][1]*frame.height/296;
-            canvas.pixel(x,y,0x42ca);
-            if (n == 1) { canvas.rect(x-1,y,3,1,0x632c); canvas.rect(x,y-1,1,3,0x632c); }
+        const int unit = std::max(1, int(frame.width) / 60);
+        const int cx = frame.width / 2, cy = frame.height * 128 / 296;
+        canvas.rect(cx-9*unit,cy-5*unit,4*unit,6*unit,ink);
+        canvas.rect(cx+5*unit,cy-5*unit,4*unit,6*unit,ink);
+        canvas.rect(cx-5*unit,cy+7*unit,10*unit,unit,ink);
+        canvas.rect(cx-7*unit,cy+5*unit,2*unit,2*unit,ink);
+        canvas.rect(cx+5*unit,cy+5*unit,2*unit,2*unit,ink);
+        text(canvas,11*scale,6*scale,state == Playback::paused ? "paused" : state == Playback::idle ? "idle" : "offline",frame.width-7*scale,dim);
+        char clock[6] = "--:--";
+        const int minute = model.clock_minute(now_ms);
+        if (minute >= 0) {
+            clock[0] = char('0' + minute / 600); clock[1] = char('0' + minute / 60 % 10);
+            clock[3] = char('0' + minute % 60 / 10); clock[4] = char('0' + minute % 10);
         }
-        planet(canvas, model, now_ms);
-        constexpr uint16_t warm = 0xc570;
-        canvas.rect(7*scale,6*scale+2,2,2,warm);
-        text(canvas,11*scale,6*scale,state == Playback::paused ? "paused" : state == Playback::idle ? "in orbit" : "offline",frame.width-7*scale,dim);
-        static constexpr const char* names[] = {"amber giant","ocean world","crater moon","frozen world","ember world","violet giant"};
-        centered_text(canvas,frame.height*246/296,names[model.planet_seed%6],warm);
-        centered_text(canvas,frame.height*266/296,"auto 30s",dim);
+        centered_text(canvas,frame.height*210/296,clock,ink,scale);
     }
     return true;
 }

@@ -31,9 +31,10 @@ uint64_t clock_ms() { return static_cast<uint64_t>(esp_timer_get_time()) / 1000;
 
 class Connection final : public policy::Stream {
 public:
-    explicit Connection(std::atomic<bool>& cancelled) : cancelled_(cancelled), deadline_(clock_ms() + request_timeout_ms) {}
+    explicit Connection(std::atomic<bool>& cancelled, const AssetInterrupt* interrupt, uint32_t ticket)
+        : budget_{cancelled,interrupt,ticket,clock_ms()+request_timeout_ms} {}
     ~Connection() override { if (tls_) esp_tls_conn_destroy(tls_); }
-    bool alive() const { return !cancelled_.load() && clock_ms() < deadline_; }
+    bool alive() const { return budget_.alive(clock_ms()); }
     bool connect(const policy::Origin& origin, const char* certificate) {
         tls_ = esp_tls_init();
         if (!tls_) return false;
@@ -83,22 +84,17 @@ public:
         return !length && alive();
     }
     int read(uint8_t* output, size_t capacity) override {
-        while (alive()) {
+        return read_until(budget_,clock_ms,[](){ vTaskDelay(1); },[&](){
             errno = 0;
-            ssize_t n = esp_tls_conn_read(tls_, output, capacity);
-            if (n >= 0) return static_cast<int>(n);
-            if (!again(n)) return -1;
-            vTaskDelay(1);
-        }
-        return -1;
+            return static_cast<int>(esp_tls_conn_read(tls_,output,capacity));
+        },[](int result){ return again(result); });
     }
 private:
     static bool again(ssize_t result) {
         return result == ESP_TLS_ERR_SSL_WANT_READ || result == ESP_TLS_ERR_SSL_WANT_WRITE ||
                (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR));
     }
-    std::atomic<bool>& cancelled_;
-    uint64_t deadline_;
+    RequestBudget budget_;
     esp_tls_t* tls_{};
 };
 }
@@ -265,8 +261,9 @@ void Client::stop() {
 namespace {
 policy::ResponseError request(const policy::Origin& origin, const char* certificate, const char* token,
                               const char* path, const char* post, size_t post_size, policy::Media media,
-                              uint8_t* output, size_t capacity, policy::Response& response, std::atomic<bool>& cancelled) {
-    Connection connection(cancelled);
+                              uint8_t* output, size_t capacity, policy::Response& response, std::atomic<bool>& cancelled,
+                              const AssetInterrupt* interrupt = nullptr, uint32_t ticket = 0) {
+    Connection connection(cancelled, interrupt, ticket);
     if (!connection.connect(origin, certificate)) return policy::ResponseError::io;
     char headers[768];
     int n = std::snprintf(headers, sizeof headers,
@@ -318,36 +315,42 @@ bool Client::playback(char* output, size_t capacity, size_t& length) {
     if (state.text.observe(snapshot)) state.text_backoff.clear();
     if (snapshot.state == Playback::unavailable) state.clear_assets();
     if (!snapshot.artwork_url[0]) state.clear_art();
-    const bool text_ready = snapshot.state != Playback::unavailable && snapshot.text_mask_layout == 1 &&
-        text_mask_path(snapshot.text_mask_url) && required_text_planes(snapshot) &&
-        !state.text.view(snapshot).bytes && state.text_backoff.ready(clock_ms());
-    const bool art_ready = snapshot.state != Playback::unavailable && snapshot.artwork_url[0] &&
+    status_ = Status::ready;
+    return true;
+}
+
+bool Client::fetch_asset(const Snapshot& snapshot, uint32_t ticket) {
+    if (!impl_ || cancelled_.load() || !asset_interrupt_.valid(ticket)) return false;
+    auto& state = *impl_;
+    if (!state.connected.load() || snapshot.state == Playback::unavailable) return false;
+    const bool text_ready = snapshot.text_mask_layout == 1 && text_mask_path(snapshot.text_mask_url) &&
+        required_text_planes(snapshot) && !state.text.view(snapshot).bytes && state.text_backoff.ready(clock_ms());
+    const bool art_ready = snapshot.artwork_url[0] && !std::strcmp(snapshot.artwork_url,state.art_url) &&
         !state.art.pixels && state.art_backoff.ready(clock_ms());
     const auto asset = state.assets.choose(text_ready, art_ready);
     if (asset == policy::Asset::text) {
-        policy::Response mask_response;
-        uint8_t* storage = state.text.storage();
-        const auto mask_error = request(state.origin, state.certificate, state.token, snapshot.text_mask_url, nullptr, 0,
-                                       policy::Media::artwork, storage, text_mask_capacity, mask_response, cancelled_);
-        if (mask_error == policy::ResponseError::none &&
-            policy::text_digest_valid(snapshot.text_mask_url, storage, mask_response.length) &&
-            state.text.commit(snapshot, mask_response.length)) state.text_backoff.clear();
-        else state.text_backoff.fail(clock_ms(), mask_response.retry_seconds);
+        policy::Response response;
+        auto* storage = state.text.storage();
+        const auto error = request(state.origin,state.certificate,state.token,snapshot.text_mask_url,nullptr,0,
+            policy::Media::artwork,storage,text_mask_capacity,response,cancelled_,&asset_interrupt_,ticket);
+        if (!asset_interrupt_.valid(ticket) || cancelled_.load()) return false;
+        if (error == policy::ResponseError::none && policy::text_digest_valid(snapshot.text_mask_url,storage,response.length) &&
+            state.text.commit(snapshot,response.length)) { state.text_backoff.clear(); return true; }
+        state.text_backoff.fail(clock_ms(),response.retry_seconds);
     } else if (asset == policy::Asset::artwork) {
         char path[257];
         if (snapshot.artwork_width <= 96 && snapshot.artwork_height <= 96 &&
-            policy::artwork_path(state.origin, snapshot.artwork_url, path, sizeof path)) {
-            policy::Response image_response;
-            auto image_error = request(state.origin, state.certificate, state.token, path, nullptr, 0, policy::Media::artwork,
-                                       state.art_bytes, sizeof state.art_bytes, image_response, cancelled_);
-            if (image_error == policy::ResponseError::none && policy::artwork_valid(state.art_bytes, image_response.length,
-                snapshot.artwork_width, snapshot.artwork_height, state.art)) state.art_backoff.clear();
-            else { state.art = {}; state.art_backoff.fail(clock_ms(), image_response.retry_seconds); }
+            policy::artwork_path(state.origin,snapshot.artwork_url,path,sizeof path)) {
+            policy::Response response;
+            const auto error = request(state.origin,state.certificate,state.token,path,nullptr,0,policy::Media::artwork,
+                state.art_bytes,sizeof state.art_bytes,response,cancelled_,&asset_interrupt_,ticket);
+            if (!asset_interrupt_.valid(ticket) || cancelled_.load()) return false;
+            if (error == policy::ResponseError::none && policy::artwork_valid(state.art_bytes,response.length,
+                snapshot.artwork_width,snapshot.artwork_height,state.art)) { state.art_backoff.clear(); return true; }
+            state.art = {}; state.art_backoff.fail(clock_ms(),response.retry_seconds);
         }
     }
-    if (cancelled_.load()) { length = 0; output[0] = 0; state.clear_assets(); status_ = Status::cancelled; return false; }
-    status_ = Status::ready;
-    return true;
+    return false;
 }
 
 bool Client::control(const char* json, size_t length) {

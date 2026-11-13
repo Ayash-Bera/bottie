@@ -1,4 +1,5 @@
 #include "live_runtime.hpp"
+#include "work_schedule.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -15,6 +16,7 @@ bool LiveRuntime::start() {
     started_ = true;
     running_ = true;
     stopping_ = false;
+    consumer_ = xTaskGetCurrentTaskHandle();
     mutex_ = xSemaphoreCreateMutexStatic(&mutex_storage_);
     stopped_ = xSemaphoreCreateBinaryStatic(&stopped_storage_);
     if (!mutex_ || !stopped_) { running_ = false; return false; }
@@ -27,11 +29,13 @@ bool LiveRuntime::stop(uint32_t timeout_ms) {
     if (!running_) return true;
     stopping_ = true;
     client_.cancel();
+    if (auto task = worker_.load()) xTaskNotifyGive(task);
     return xSemaphoreTake(stopped_, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
 }
 
 void LiveRuntime::entry(void* self) {
     auto& runtime = *static_cast<LiveRuntime*>(self);
+    runtime.worker_ = xTaskGetCurrentTaskHandle();
     runtime.work();
     runtime.client_.stop();
     runtime.running_ = false;
@@ -45,6 +49,7 @@ void LiveRuntime::publish(bool online, const Snapshot* snapshot, const Artwork* 
     else shared_.offline();
     ++published_;
     xSemaphoreGive(mutex_);
+    if (consumer_) xTaskNotifyGive(consumer_);
 }
 
 void LiveRuntime::work() {
@@ -55,40 +60,56 @@ void LiveRuntime::work() {
         publish(false);
         return;
     }
+    WorkSchedule schedule;
+    uint64_t observed = 0;
     while (!stopping_) {
-        size_t length = 0;
-        uint64_t observed = now_ms();
-        bool accepted = false;
-        if (client_.playback(body_.data(), body_.size(), length)) {
-            Snapshot snapshot;
-            if (parse_snapshot(body_.data(), length, snapshot) == Error::none &&
-                worker_model_.apply_snapshot(snapshot, observed) == Error::none) {
-                const auto mask = client_.text_mask(snapshot);
-                publish(true, &snapshot, client_.artwork(), observed, &mask);
-                accepted = true;
-            }
-            else publish(false);
-        } else publish(false);
-        if (!accepted) worker_model_.disconnected();
+        // Capture before checking the mailbox, closing the enqueue-to-request race.
+        const auto ticket = client_.asset_ticket();
         Intent intent;
-        bool send = false;
+        bool send = false, pending = true;
         if (xSemaphoreTake(mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
             send = controls_.take(worker_model_, now_ms(), intent);
+            pending = controls_.pending();
             xSemaphoreGive(mutex_);
         }
         if (send && !stopping_) {
             char json[128];
             if (encode_intent(intent, json, sizeof json) && client_.control(json, std::strlen(json))) ++sent_;
             else { ++control_errors_; worker_model_.disconnected(); publish(false); }
+            schedule.control_attempted(now_ms());
+            continue;
         }
-        ++polls_;
-        if (accepted) ++accepted_;
-        else ++rejected_;
+        const auto work = schedule.next(now_ms(), pending);
+        if (work == WorkerWork::metadata) {
+            size_t length = 0;
+            const auto started = now_ms();
+            bool accepted = false;
+            if (client_.playback(body_.data(), body_.size(), length)) {
+                Snapshot snapshot;
+                observed = now_ms();
+                if (parse_snapshot(body_.data(), length, snapshot) == Error::none &&
+                    worker_model_.apply_snapshot(snapshot, observed) == Error::none) {
+                    const auto mask = client_.text_mask(snapshot);
+                    publish(true, &snapshot, client_.artwork(), observed, &mask);
+                    accepted = true;
+                }
+            }
+            if (!accepted) { worker_model_.disconnected(); publish(false); }
+            ++polls_;
+            if (accepted) ++accepted_; else ++rejected_;
+            poll_ms_ = static_cast<uint32_t>(now_ms() - started);
+            schedule.polled(now_ms());
+        } else if (work == WorkerWork::asset) {
+            if (worker_model_.effective_state(now_ms()) != Playback::unavailable &&
+                client_.fetch_asset(worker_model_.snapshot,ticket) &&
+                worker_model_.effective_state(now_ms()) != Playback::unavailable) {
+                const auto mask = client_.text_mask(worker_model_.snapshot);
+                publish(true,&worker_model_.snapshot,client_.artwork(),observed,&mask);
+            }
+            schedule.asset_attempted(now_ms());
+        } else ulTaskNotifyTake(pdTRUE, std::max<TickType_t>(1,pdMS_TO_TICKS(pending ? 20 : schedule.wait_ms(now_ms()))));
         status_ = client_.status();
-        poll_ms_ = static_cast<uint32_t>(now_ms() - observed);
         stack_free_ = uxTaskGetStackHighWaterMark(nullptr);
-        // Cancellation can interrupt the next request without waiting for a full poll interval.
-        for (unsigned n = 0; n < 10 && !stopping_; ++n) vTaskDelay(pdMS_TO_TICKS(100));
     }
     publish(false);
 }
@@ -108,7 +129,9 @@ void LiveRuntime::consume(Model& model) {
 bool LiveRuntime::enqueue(const Intent& intent) {
     if (!intent.control_target[0] || !running_ || stopping_ || !mutex_ || xSemaphoreTake(mutex_, pdMS_TO_TICKS(10)) != pdTRUE) return false;
     const bool accepted = controls_.put(intent, now_ms());
+    if (accepted) client_.interrupt_assets();
     xSemaphoreGive(mutex_);
+    if (accepted) if (auto task = worker_.load()) xTaskNotifyGive(task);
     return accepted;
 }
 

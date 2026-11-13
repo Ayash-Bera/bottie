@@ -115,20 +115,7 @@ void state_checks() {
     CHECK(ingest(ended, replace(valid, "12000", "179999"), 0) == Error::none);
     CHECK(ended.progress(1000) == 180000);
 
-    Model idle;
-    uint32_t initial = idle.planet_seed;
-    idle.tick(29999);
-    CHECK(idle.planet_seed == initial);
-    idle.tick(30000);
-    CHECK(idle.planet_seed != initial);
-    initial = idle.planet_seed;
-    CHECK(idle.tap_planet(30001) && idle.planet_seed != initial);
-    CHECK(ingest(idle, valid, 40000) == Error::none);
-    initial = idle.planet_seed;
-    CHECK(!idle.tap_planet(40001));
-    idle.tick(41000);
-    CHECK(idle.planet_seed == initial);
-    CHECK(ingest(idle, paused, 42000) == Error::none && idle.tap_planet(42001));
+
 }
 
 void control_checks() {
@@ -209,18 +196,9 @@ void artwork_render_checks() {
     CHECK(!render(model, 0, invalid, &art));
     invalid = frame; invalid.stride = 127;
     CHECK(!render(model, 0, invalid));
-    std::set<uint32_t> families;
     Model idle;
-    for (uint32_t family = 0; family < 6; ++family) {
-        idle.planet_seed = 12 + family;
-        CHECK(render(idle, 0, frame)); families.insert(frame_hash(frame));
-        first = frame_hash(frame);
-        CHECK(render(idle, 1800, frame) && first != frame_hash(frame));
-    }
-    CHECK(families.size() == 6);
-    idle.planet_seed = 10;
     CHECK(render(idle, 0, frame)); first = frame_hash(frame);
-    CHECK(render(idle, 1800, frame) && first != frame_hash(frame));
+    CHECK(render(idle, 1800, frame) && first == frame_hash(frame));
     std::array<uint16_t, 240 * 240> large{};
     CHECK(render(idle, 0, {large.data(), large.size(), 240, 240, 240}));
     std::vector<uint16_t> portrait(240 * 296 + 2, 0xbeef);
@@ -302,8 +280,7 @@ void ui_checks() {
 
     for (auto state : {Playback::playing,Playback::idle,Playback::paused,Playback::unavailable}) {
         model.snapshot.state = state;
-        for (unsigned family = 0; family < 6; ++family) {
-            model.planet_seed = 12+family;
+        {
             CHECK(render(model,1800,frame,&art));
             for (uint16_t y = 0; y < 296; y += 16) {
                 uint16_t rows = std::min<uint16_t>(16,296-y);

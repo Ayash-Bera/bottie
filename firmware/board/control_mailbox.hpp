@@ -6,6 +6,7 @@ namespace bottie {
 // The runtime owns synchronization; this policy is also exercised without a scheduler.
 class ControlMailbox {
 public:
+    bool pending() const { return count_ || has_volume_; }
     bool put(const Intent& intent, uint64_t now) {
         Pending item{intent, now};
         if (intent.action == Action::volume) { volume_ = item; has_volume_ = true; return true; }

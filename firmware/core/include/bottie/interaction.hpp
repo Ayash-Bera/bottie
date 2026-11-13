@@ -32,7 +32,7 @@ struct SettingsView {
     bool volume_available{};
 };
 struct UiAction {
-    bool planet{}, control{}, brightness_changed{};
+    bool control{}, brightness_changed{};
     Intent intent{};
 };
 struct Rect {
@@ -50,10 +50,11 @@ public:
     SettingsView settings{};
     void refresh(const Model& model, uint64_t now_ms);
     void expire(uint64_t now_ms);
+    void barrier(uint64_t now_ms) { cancel(); cutoff_set_ = true; discard_through_ms_ = now_ms; }
     UiAction update(const PointerSample& sample, const Model& model, uint64_t now_ms,
                     uint16_t width = 240, uint16_t height = 296);
 private:
-    enum class Hit { none, planet, shuffle, previous, play_pause, next, repeat, brightness, volume, resume, close };
+    enum class Hit { none, shuffle, previous, play_pause, next, repeat, brightness, volume, resume, close };
     Hit hit(int x, int y, const Model& model, uint64_t now, uint16_t width, uint16_t height) const;
     void cancel();
     bool pressed_{}, suppressed_{}, moved_{}, held_{};

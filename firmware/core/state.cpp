@@ -7,14 +7,6 @@
 namespace bottie {
 namespace {
 uint64_t elapsed(uint64_t now, uint64_t then) { return now >= then ? now - then : 0; }
-void advance_planet(Model& model, uint64_t now) {
-    uint32_t seed = model.planet_seed;
-    seed ^= seed << 13;
-    seed ^= seed >> 17;
-    seed ^= seed << 5;
-    model.planet_seed = seed ? seed : 0x74b39ac1U;
-    model.planet_changed_ms = now;
-}
 } // namespace
 
 Error Model::ingest(const char* json, size_t bytes, uint64_t now_ms, uint64_t unix_ms) {
@@ -33,6 +25,11 @@ Error Model::apply_snapshot(const Snapshot& candidate, uint64_t now_ms, uint64_t
         disconnected();
         return Error::stale;
     }
+    if (candidate.clock.valid() && (!clock_anchor.valid() || candidate.clock.unix_ms > clock_anchor.unix_ms ||
+        (candidate.clock.unix_ms == clock_anchor.unix_ms && candidate.clock.utc_offset_min != clock_anchor.utc_offset_min))) {
+        clock_anchor = candidate.clock;
+        clock_received_ms = now_ms;
+    }
     // A repeated cached snapshot must not renew freshness or restart progress.
     if (received && candidate.updated_at_ms == snapshot.updated_at_ms) {
         snapshot = candidate;
@@ -43,7 +40,6 @@ Error Model::apply_snapshot(const Snapshot& candidate, uint64_t now_ms, uint64_t
     received = online = true;
     received_ms = now_ms;
     age_at_receive_ms = unix_ms > candidate.updated_at_ms ? unix_ms - candidate.updated_at_ms : 0;
-    if (snapshot.state == Playback::playing) planet_changed_ms = now_ms;
     return Error::none;
 }
 
@@ -178,17 +174,9 @@ bool encode_intent(const Intent& intent, char* output, size_t capacity) {
     return true;
 }
 
-void Model::tick(uint64_t now_ms) {
-    if (effective_state(now_ms) == Playback::playing) {
-        planet_changed_ms = now_ms;
-    } else if (now_ms < planet_changed_ms) {
-        planet_changed_ms = now_ms;
-    } else if (elapsed(now_ms, planet_changed_ms) >= planet_period_ms) advance_planet(*this, now_ms);
-}
-
-bool Model::tap_planet(uint64_t now_ms) {
-    if (effective_state(now_ms) == Playback::playing) return false;
-    advance_planet(*this, now_ms);
-    return true;
+int Model::clock_minute(uint64_t now) const {
+    if (!clock_anchor.valid() || now < clock_received_ms || now - clock_received_ms > clock_max_ms - clock_anchor.unix_ms) return -1;
+    const int64_t minutes = static_cast<int64_t>((clock_anchor.unix_ms + now - clock_received_ms) / 60000) + clock_anchor.utc_offset_min;
+    return static_cast<int>((minutes % 1440 + 1440) % 1440);
 }
 } // namespace bottie

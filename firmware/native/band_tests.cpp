@@ -61,10 +61,7 @@ int main() {
     compare(model, 1800, &art);
     for (auto state : {bottie::Playback::paused, bottie::Playback::idle, bottie::Playback::unavailable}) {
         model.snapshot.state = state;
-        for (uint32_t seed = 10; seed < 15; ++seed) {
-            model.planet_seed = seed;
-            compare(model, 1800, nullptr);
-        }
+        compare(model, 1800, nullptr);
     }
     bottie::Frame invalid{reinterpret_cast<uint16_t*>(pixels.data()), pixels.size() / 2, 240, 296, 240, 288, 9};
     CHECK(!bottie::render(model, 0, invalid) && !bottie::frame_hash(invalid));
@@ -74,5 +71,5 @@ int main() {
     invalid.capacity = pixels.size() / 2;
     invalid.storage_y = 296;
     CHECK(!bottie::render(model, 0, invalid));
-    std::puts("BOTTIE_BANDS_OK full/banded equality, all states/families, short tail, stride and guards");
+    std::puts("BOTTIE_BANDS_OK full/banded equality, all states, short tail, stride and guards");
 }

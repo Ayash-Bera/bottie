@@ -63,7 +63,7 @@ Interaction::Hit Interaction::hit(int x, int y, const Model& model, uint64_t now
         if (layout.close.contains(x, y)) return Hit::close;
         return Hit::none;
     }
-    if (model.effective_state(now) != Playback::playing) return Hit::planet;
+    if (model.effective_state(now) != Playback::playing) return Hit::none;
     const int scale = width >= 200 ? 2 : 1;
     if (y < height - 25 * scale || y >= height - 3 * scale) return Hit::none;
     return static_cast<Hit>(static_cast<int>(Hit::shuffle) + std::min(4, x * 5 / width));
@@ -125,8 +125,7 @@ UiAction Interaction::update(const PointerSample& sample, const Model& model, ui
             if (captured_ == Hit::close) settings.open = false;
             else if (captured_ == Hit::resume && same) {
                 result.control = model.resume_intent(now, result.intent);
-            } else if (captured_ == Hit::planet && same) result.planet = true;
-            else if (same && captured_ >= Hit::shuffle && captured_ <= Hit::repeat)
+            } else if (same && captured_ >= Hit::shuffle && captured_ <= Hit::repeat)
                 result.control = model.snapshot.control_target[0] &&
                     model.intent(static_cast<Button>(static_cast<int>(captured_) - static_cast<int>(Hit::shuffle)), now, result.intent);
         }

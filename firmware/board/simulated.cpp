@@ -28,7 +28,7 @@ InputEvent SimulatedBoard::input() {
     uint64_t now = monotonic_ms();
     if (now - last_input_ms_ < 5000) return {};
     last_input_ms_ = now;
-    if ((now / 20000) % 3 == 0) return {EventType::planet_tap, Button::play_pause};
+    if ((now / 20000) % 3 == 0) return {};
     return {EventType::control, static_cast<Button>((now / 5000) % 5)};
 }
 

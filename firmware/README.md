@@ -14,7 +14,7 @@ From the repository root, using the installed pinned SDK:
 /usr/bin/fish --no-config scripts/esp.fish smoke-build esp32s3
 ```
 
-Native checks use address and undefined-behavior instrumentation. They cover malformed and oversized JSON, Unicode, duplicate keys, stale and offline state, capability restrictions, exact controls, BTAR validation, render bounds, artwork aspect fit and deterministic planet families. The target helper validates the ESP image checksum, digest and target through the existing validator. The default smoke app remains selected unless `BOTTIE_HEADLESS=ON` is explicitly passed.
+Native checks use address and undefined-behavior instrumentation. They cover malformed and oversized JSON, Unicode, duplicate keys, stale and offline state, capability restrictions, exact controls, BTAR validation, render bounds, artwork aspect fit and static face/clock output. The target helper validates the ESP image checksum, digest and target through the existing validator. The default smoke app remains selected unless `BOTTIE_HEADLESS=ON` is explicitly passed.
 
 ## Host integration harness
 
@@ -31,7 +31,7 @@ python3 firmware/tools/check-fixtures.py build/firmware/native/bottie_fixture pr
 
 Buttons are `shuffle`, `previous`, `play_pause`, `next`, `repeat`. Control mode prints the POST body, never sends it. Normal mode prints effective state, progress, frame hash and whether artwork was decoded. Exit codes: 0 accepted, 1 invalid snapshot/artwork, 2 usage or I/O error, 3 control unavailable. The host owns control delivery and must refresh playback after success. Never blindly retry previous/next after ambiguous delivery.
 
-`--frame FILE.ppm` exports the actual 128 by 128 native-rendered framebuffer as RGB pixels. `--seed N` selects a deterministic planet seed. These are simulated frames, never evidence of a working physical display.
+`--frame FILE.ppm` exports the actual 128 by 128 native-rendered framebuffer as RGB pixels. These are simulated frames, never evidence of a working physical display.
 
 Add `--profile recovered` to render and export at 240 by 296, with larger pixel text and controls. Artwork remains bounded to 240 per side independently of the framebuffer dimensions.
 
@@ -64,7 +64,7 @@ Four button slots have a two-second queued expiry. A separate latest-desired vol
 
 Live stacks are 8 KiB for main, a static 24 KiB for networking and a static 4 KiB for touch. The build records linked RAM in memory-report.json. PSRAM stays disabled. Earlier firmware had bounded runtime measurements; this image needs fresh heap/stack/frame/sampling evidence.
 
-Live mode stores sixteen rows at a time, using 7680 bytes instead of a 142080-byte full framebuffer. Each band retains the full 240 by 296 layout coordinates. One model/time/artwork/text-mask snapshot remains fixed across the entire frame; handoff consumption happens only before its first band. Raster loops clip their vertical work to the stored rows. The SPI adapter sets the matching row window for each band, including the final eight rows. Native tests reconstruct frames and compare every pixel with full-frame rendering for playing, paused, idle, offline, missing artwork, album context and all five planet families. The offline profiles and native export continue to support full-frame buffers.
+Live mode stores sixteen rows at a time, using 7680 bytes instead of a 142080-byte full framebuffer. Each band retains the full 240 by 296 layout coordinates. One model/time/artwork/text-mask snapshot remains fixed across the entire frame; handoff consumption happens only before its first band. Raster loops clip their vertical work to the stored rows. The SPI adapter sets the matching row window for each band, including the final eight rows. Native tests reconstruct frames and compare every pixel with full-frame rendering for playing, paused, idle, offline, missing artwork, album context and clock transitions. The offline profiles and native export continue to support full-frame buffers.
 
 The linked free-memory figure excludes runtime Wi-Fi buffers, TLS handshakes, the internal client allocation, main/system task stacks and allocator overhead. It is not a usable-heap measurement or proof of sustained networking. Commissioning must record minimum internal heap, largest free block, both task stack high-water marks, frame times and recovery through failed connections before deployment.
 
@@ -78,7 +78,7 @@ The commissioning profile selects the captured partition layout and 16 MiB flash
 
 ## Touch and settings
 
-Short taps act once on release. Playing icons map left to right to shuffle, previous, play/pause, next and repeat. A short planet tap changes the planet. Hold still for 650 ms to open settings in either scene; the hold cancels any pending playback tap. Moving more than 12 pixels cancels a regular tap. Settings offers brightness, close and capability-gated resume/play. Volume appears only with fresh explicit support and a target guard. An unknown percentage is shown as volume -- without a fabricated thumb position. Closing settings preserves the original scenes.
+Short taps act once on release. Playing icons map left to right to shuffle, previous, play/pause, next and repeat. A short tap on the nonplaying face does nothing. Hold still for 650 ms to open settings in either scene; the hold cancels any pending playback tap. Moving more than 12 pixels cancels a regular tap. Settings offers brightness, close and capability-gated resume/play. Volume appears only with fresh explicit support and a target guard. An unknown percentage is shown as volume -- without a fabricated thumb position. Closing settings preserves the original scenes.
 
 CST810 uses address 0x15, SDA12/SCL11, 100 kHz and register0x02. Valid raw bounds are x0..295/y0..239; portrait coordinates are `(raw_y, 295-raw_x)`. A dedicated task samples every nominal20 ms with a driver wait of at least one tick (10 ms here). A32-report timestamped queue preserves press/release edges across long frames. Overflow, a200 ms input gap or obsolete queued input cancels the gesture until release. No separate reset, IRQ scan or GPIO37 access occurs. `touch_device.hpp` and `PointerQueue` are the actual native fake-bus/queue seams.
 
@@ -99,3 +99,13 @@ The host shapes Bengali, Japanese and mixed-script names with pinned fonts. Name
 The companion has already bounded names to256 UTF-8 bytes before the gateway sees them. That boundary can lose a grapheme suffix. The host conservatively discards a final potentially incomplete cluster for253..256-byte values and adds an ellipsis; it cannot recover missing source bytes. Layout ellipsis is cluster-safe and reshaped on the host. No fonts, shaper, new partition or PSRAM allocation are added to firmware.
 
 Native real-bundle export uses `bottie_fixture --profile recovered --text bundle.btxt --art cover.btar --frame output.ppm < playback.json`. The descriptor must contain the exact binary SHA256 or export rejects it. `bottie_text_tests` covers malformed/partial bundles, semantic flags, exact cache identity, late fetch rejection, ownership, alpha nibbles and1/16/31-row reconstruction including the final short band. These checks establish software behavior; physical script readability and new runtime memory margins still need observation after an authorized update.
+
+## Selective rendering and clock
+
+Nonplaying states use a static pixel face and a minute clock. The optional snapshot `clock` object contains integer `unix_ms` (946684800000 through4102444799999) and `utc_offset_min` (-840 through840). Invalid optional clock data leaves playback valid. Before the first valid synchronization the clock shows `--:--`; otherwise the last valid anchor advances using monotonic elapsed time even while offline. Repeated identical anchors do not stop the clock. A rejected older playback snapshot cannot reset time. The cosmetic clock never participates in control-target, gesture or text-mask identity. No RTC, NVS setting or new network endpoint is used.
+
+`DirtyBands` compares bounded visual state before rasterization. It skips unchanged16-row bands, restricts record/progress animation to their rows, and redraws the complete playing scene when copied artwork changes because its palette also affects text and controls. Initial output, state changes, overlay open/close and transmission recovery redraw all rows. Failed transmission never marks a band clean. Text changes invalidate their old and new bounds. Frame metadata/time/artwork/text/settings remain fixed while a pass presents bands; input can interrupt a pass to show changed settings next, retaining incomplete bands. A target/state/track transition fences queued input until the visible pass finishes, then requires a fresh release before a new press.
+
+The20ms touch sampler keeps held samples and transitions, wakes the render task, and omits redundant resting releases. The render task drains input between blocking band transfers. Idle waits up to1s for cosmetic clock/freshness checks, with input and metadata notifications waking it early. No DMA ownership, SPI frequency, CPU frequency or panel wiring changes are involved. `BOTTIE_REDRAW` reports actual bands, pixel bytes, aggregate render/present time and input age for later physical profiling.
+
+The native `bottie_efficiency_tests` reconstructs the simulated panel through metadata/late-palette/overlay/clock/error transitions and uses the same production read-loop cancellation seam for held headers and bodies. `bottie_benchmark FIXTURE_DIR orbit-96.btar` reports seven repetitions, native render times and recorded present windows/chunks/bytes. Build it with Release `-O2 -DNDEBUG`; the same benchmark can link the pinned c72 core with `-DBOTTIE_BASELINE`. Host timings and simulated SPI counts do not establish device frame rate or power savings.

@@ -230,6 +230,22 @@ struct Parser {
         result = data[tokens[index].start] == 't';
         return true;
     }
+    bool offset(size_t index, int16_t& result) const {
+        if (index >= count || tokens[index].kind != Kind::number) return false;
+        const auto& token = tokens[index];
+        size_t i = 0;
+        const bool negative = data[token.start] == '-';
+        if (negative) ++i;
+        unsigned value = 0;
+        for (; i < token.length; ++i) {
+            const char c = data[token.start + i];
+            if (c < '0' || c > '9') return false;
+            value = value * 10 + unsigned(c - '0');
+            if (value > 840) return false;
+        }
+        result = static_cast<int16_t>(negative ? -int(value) : int(value));
+        return true;
+    }
 };
 
 template <typename T, size_t N>
@@ -293,6 +309,13 @@ Error parse_snapshot(const char* json, size_t bytes, Snapshot& output) {
             std::strcpy(candidate.text_mask_url, path);
             candidate.text_mask_layout = 1;
         }
+    }
+    const size_t clock = field("clock");
+    if (clock != parser.count && parser.tokens[clock].kind == Kind::object) {
+        Clock value;
+        if (parser.number(parser.find(clock, "unix_ms"), value.unix_ms) &&
+            parser.offset(parser.find(clock, "utc_offset_min"), value.utc_offset_min) && value.valid())
+            candidate.clock = value;
     }
     size_t caps = field("capabilities");
     auto& cap = candidate.capabilities;

@@ -5,7 +5,7 @@
 
 namespace bottie {
 
-enum class EventType { none, planet_tap, control, pointer };
+enum class EventType { none, control, pointer };
 struct InputEvent {
     EventType type{EventType::none};
     Button button{Button::play_pause};

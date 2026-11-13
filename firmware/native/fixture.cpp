@@ -22,7 +22,6 @@ int main(int argc, char** argv) {
     const char* art_path = nullptr;
     const char* text_path = nullptr;
     const char* frame_path = nullptr;
-    uint64_t seed = 0x74b39ac1U;
     uint16_t width = 128, height = 128;
     bottie::Button button{};
     for (int n = 1; n < argc; ++n) {
@@ -42,9 +41,6 @@ int main(int argc, char** argv) {
             if (std::strcmp(argv[++n], "recovered") != 0) return 2;
             width = 240; height = 296;
         }
-        else if (std::strcmp(argv[n], "--seed") == 0 && n + 1 < argc) {
-            if (!number(argv[++n], seed) || seed > UINT32_MAX) return 2;
-        }
         else if (std::strcmp(argv[n], "--control") == 0 && n + 1 < argc) {
             const char* name = argv[++n];
             const char* names[] = {"shuffle", "previous", "play_pause", "next", "repeat"};
@@ -55,7 +51,7 @@ int main(int argc, char** argv) {
             if (!found) return 2;
             control = true;
         } else {
-            std::fputs("Usage: bottie_fixture [--control BUTTON] [--elapsed-ms N] [--wall-ms N] [--offline] [--art FILE] [--text FILE] [--frame FILE.ppm] [--seed N] [--profile recovered] < playback.json\n", stderr);
+            std::fputs("Usage: bottie_fixture [--control BUTTON] [--elapsed-ms N] [--wall-ms N] [--offline] [--art FILE] [--text FILE] [--frame FILE.ppm] [--profile recovered] < playback.json\n", stderr);
             return 2;
         }
     }
@@ -63,7 +59,6 @@ int main(int argc, char** argv) {
     size_t length = std::fread(bytes.data(), 1, bytes.size(), stdin);
     if (std::ferror(stdin)) return 2;
     bottie::Model model;
-    model.planet_seed = static_cast<uint32_t>(seed);
     auto error = model.ingest(bytes.data(), length, 0, wall);
     if (error != bottie::Error::none) {
         std::fprintf(stderr, "Snapshot rejected: %s\n", bottie::error_name(error));
@@ -110,7 +105,6 @@ int main(int argc, char** argv) {
     const auto text_mask = text_cache.view(model.snapshot);
     std::array<uint16_t, bottie::max_frame_width * bottie::max_frame_height> pixels{};
     bottie::Frame frame{pixels.data(), pixels.size(), width, height, width};
-    model.tick(elapsed);
     if (!bottie::render(model, elapsed, frame, art_path ? &artwork : nullptr, &text_mask)) return 1;
     if (!bottie::render_settings(model, elapsed, frame, settings)) return 1;
     if (frame_path) {

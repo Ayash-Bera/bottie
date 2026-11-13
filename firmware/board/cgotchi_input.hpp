@@ -27,5 +27,6 @@ private:
     StaticTask_t task_{};
     StaticSemaphore_t stopped_storage_{};
     SemaphoreHandle_t stopped_{};
+    TaskHandle_t consumer_{};
 };
 } // namespace bottie

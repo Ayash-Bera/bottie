@@ -24,6 +24,8 @@ public:
     bool enqueue(const Intent& intent);
     const Artwork* artwork();
     TextMask text_mask() const;
+    uint32_t artwork_revision() const { return displayed_.art_revision; }
+    uint32_t text_revision() const { return displayed_.text_revision; }
     RuntimeHealth health() const;
 private:
     static constexpr size_t stack_bytes = 24 * 1024;
@@ -47,5 +49,7 @@ private:
     std::atomic<uint32_t> sent_{}, control_errors_{};
     uint32_t published_{}, consumed_{};
     bool started_{};
+    TaskHandle_t consumer_{};
+    std::atomic<TaskHandle_t> worker_{};
 };
 } // namespace bottie

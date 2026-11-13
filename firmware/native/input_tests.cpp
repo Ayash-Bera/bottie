@@ -117,8 +117,8 @@ void gestures() {
     model = playing(); model.snapshot.state = Playback::idle;
     Interaction idle;
     idle.update(point(120,148,40), model, 40);
-    CHECK(idle.update(point(0,0,100,false), model, 100).planet);
-    for (uint64_t t = 200; t <= 860; t += 20) CHECK(!idle.update(point(120,148,t), model, t).planet);
+    CHECK(!idle.update(point(0,0,100,false), model, 100).control);
+    for (uint64_t t = 200; t <= 860; t += 20) CHECK(!idle.update(point(120,148,t), model, t).control);
     CHECK(idle.settings.open);
     idle.update(point(0,0,880,false), model, 880);
     idle.update(point(120,180,900), model, 900);

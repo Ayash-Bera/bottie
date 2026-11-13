@@ -30,6 +30,7 @@ bool CgotchiInput::initialize() {
     stopped_ = xSemaphoreCreateBinaryStatic(&stopped_storage_);
     if (!stopped_) return false;
     running_ = true;
+    consumer_ = xTaskGetCurrentTaskHandle();
     if (!xTaskCreateStatic(entry, "touch", stack_.size() * sizeof(StackType_t), this, 4, stack_.data(), &task_)) {
         running_ = false; return false;
     }
@@ -48,6 +49,7 @@ void CgotchiInput::entry(void* self) {
 void CgotchiInput::work() {
     TickType_t tick = xTaskGetTickCount();
     uint64_t previous = 0;
+    bool previous_down = false, previous_valid = false, first = true;
     while (running_) {
         const uint64_t start = esp_timer_get_time();
         const uint64_t now = start / 1000;
@@ -57,7 +59,12 @@ void CgotchiInput::work() {
         max_read_us_ = std::max(max_read_us_.load(), static_cast<uint32_t>(esp_timer_get_time() - start));
         ++samples_;
         if (sample.valid) ++valid_; else ++errors_;
-        if (!queue_.push(sample)) ++overflows_;
+        // Keep held-pointer samples and every transition; resting releases need no queue slot.
+        if (first || sample.down || previous_down || sample.valid != previous_valid) {
+            if (!queue_.push(sample)) ++overflows_;
+            if (consumer_) xTaskNotifyGive(consumer_);
+        }
+        first = false; previous_down = sample.down; previous_valid = sample.valid;
         vTaskDelayUntil(&tick, pdMS_TO_TICKS(20));
     }
 }

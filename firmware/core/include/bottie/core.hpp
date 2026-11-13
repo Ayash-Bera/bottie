@@ -12,7 +12,7 @@ constexpr uint16_t max_frame_width = 240;
 constexpr uint16_t max_frame_height = 296;
 constexpr uint64_t max_json_integer = 9007199254740991ULL;
 constexpr uint64_t stale_after_ms = 15000;
-constexpr uint64_t planet_period_ms = 30000;
+constexpr uint64_t clock_min_ms = 946684800000ULL, clock_max_ms = 4102444799999ULL;
 
 enum class Playback { playing, paused, idle, unavailable };
 enum class Repeat { off, context, track };
@@ -23,6 +23,13 @@ enum class Error { none, size, syntax, depth, tokens, field, range, version, sta
 
 struct Capabilities {
     bool play{}, pause{}, previous{}, next{}, shuffle{}, repeat{}, volume{};
+};
+
+struct Clock {
+    uint64_t unix_ms{};
+    int16_t utc_offset_min{};
+    bool valid() const { return unix_ms >= clock_min_ms && unix_ms <= clock_max_ms &&
+                              utc_offset_min >= -840 && utc_offset_min <= 840; }
 };
 
 struct Snapshot {
@@ -42,6 +49,7 @@ struct Snapshot {
     bool target_known{};
     char text_mask_url[74]{};
     uint8_t text_mask_layout{};
+    Clock clock{};
 };
 
 Error parse_snapshot(const char* json, size_t bytes, Snapshot& output);
@@ -61,8 +69,9 @@ bool encode_intent(const Intent& intent, char* output, size_t capacity);
 struct Model {
     Snapshot snapshot{};
     bool received{}, online{};
-    uint64_t received_ms{}, age_at_receive_ms{}, planet_changed_ms{};
-    uint32_t planet_seed{0x74b39ac1U};
+    uint64_t received_ms{}, age_at_receive_ms{};
+    Clock clock_anchor{};
+    uint64_t clock_received_ms{};
 
     Error ingest(const char* json, size_t bytes, uint64_t now_ms, uint64_t unix_ms = 0);
     // Accept only snapshots already validated by parse_snapshot.
@@ -74,8 +83,7 @@ struct Model {
     bool resume_intent(uint64_t now_ms, Intent& output) const;
     bool volume_intent(uint8_t percent, uint64_t now_ms, Intent& output) const;
     bool allows(const Intent& intent, uint64_t now_ms) const;
-    void tick(uint64_t now_ms);
-    bool tap_planet(uint64_t now_ms);
+    int clock_minute(uint64_t now_ms) const;
 };
 
 struct Artwork {
