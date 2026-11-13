@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBridgeConfiguration(t *testing.T) {
@@ -56,10 +57,41 @@ func TestBridgeConfiguration(t *testing.T) {
 			if err != nil && strings.Contains(err.Error(), tt.token) {
 				t.Fatal("token leaked in error")
 			}
-			if len(calls) != 3 || calls["BOTTIE_BRIDGE_BIND"] != 1 || calls["BOTTIE_BRIDGE_TOKEN_FILE"] != 1 || calls["BOTTIE_BRIDGE_TEXT_MASKS"] != 1 {
+			if len(calls) != 4 || calls["BOTTIE_BRIDGE_BIND"] != 1 || calls["BOTTIE_BRIDGE_TOKEN_FILE"] != 1 || calls["BOTTIE_BRIDGE_TEXT_MASKS"] != 1 || calls["BOTTIE_CLOCK_ZONE"] != 1 {
 				t.Fatal(calls)
 			}
 		})
+	}
+}
+
+func TestBridgeClockZone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte(strings.Repeat("s", 32)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		zone   string
+		offset int
+		valid  bool
+	}{{"", 330, true}, {"Asia/Kolkata", 330, true}, {"UTC", 0, true}, {"America/New_York", -300, true}, {"Asia/Kathmandu", 345, true}, {"not/a/zone", 0, false}, {"Local", 0, false}} {
+		cfg, err := ParseBridge(func(key string) string {
+			switch key {
+			case "BOTTIE_BRIDGE_TOKEN_FILE":
+				return path
+			case "BOTTIE_CLOCK_ZONE":
+				return tc.zone
+			}
+			return ""
+		})
+		if (err == nil) != tc.valid {
+			t.Fatalf("zone %q validation: %v", tc.zone, err)
+		}
+		if tc.valid {
+			_, seconds := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC).In(cfg.ClockZone).Zone()
+			if seconds/60 != tc.offset {
+				t.Fatalf("zone %q offset %d", tc.zone, seconds)
+			}
+		}
 	}
 }
 

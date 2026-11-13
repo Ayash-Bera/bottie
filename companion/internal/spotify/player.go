@@ -62,6 +62,9 @@ type Player struct {
 	device                                 DeviceStatus
 	targetID                               string
 	volumeAfter                            time.Time
+	assetJob                               *assetJob
+	assetWake                              chan struct{}
+	assetBackoff                           time.Time
 }
 
 func New(clientID, redirectURI string, art *artwork.Store, client *http.Client) *Player {
@@ -78,7 +81,7 @@ func NewWithStore(clientID, redirectURI string, art *artwork.Store, client *http
 	if store != nil {
 		status = "pending"
 	}
-	return &Player{cached: models.Empty("unavailable"), problem: loginRequired(), op: make(chan struct{}, 1), client: &c, art: art, clientID: clientID, redirectURI: redirectURI, apiURL: "https://api.spotify.com/v1", tokenURL: "https://accounts.spotify.com/api/token", authorizeURL: "https://accounts.spotify.com/authorize", now: time.Now, names: make(map[string]nameEntry), nudge: make(chan struct{}, 1), store: store, authorization: AuthorizationStatus{Storage: status}}
+	return &Player{cached: models.Empty("unavailable"), problem: loginRequired(), op: make(chan struct{}, 1), client: &c, art: art, clientID: clientID, redirectURI: redirectURI, apiURL: "https://api.spotify.com/v1", tokenURL: "https://accounts.spotify.com/api/token", authorizeURL: "https://accounts.spotify.com/authorize", now: time.Now, names: make(map[string]nameEntry), nudge: make(chan struct{}, 1), assetWake: make(chan struct{}, 1), store: store, authorization: AuthorizationStatus{Storage: status}}
 }
 
 func loginRequired() *models.ServiceError {
@@ -122,6 +125,9 @@ func (p *Player) save(s models.Playback, e *models.ServiceError) {
 	p.saveLocked(s, e)
 }
 func (p *Player) saveLocked(s models.Playback, e *models.ServiceError) {
+	if e != nil || s.State == "idle" || s.State == "unavailable" {
+		p.cancelAssetsLocked()
+	}
 	p.cached = s.Bounded()
 	p.problem = e
 	if e != nil || p.cached.ControlTarget == "" {
@@ -192,7 +198,9 @@ func (p *Player) Complete(ctx context.Context, state, cookie, code, providerErro
 		p.fail(e)
 		return e
 	}
+	p.mu.Lock()
 	p.names = make(map[string]nameEntry)
+	p.mu.Unlock()
 	p.save(models.Empty("unavailable"), models.Problem("upstream_error", 502, "connected; waiting for the first playback poll"))
 	select {
 	case p.nudge <- struct{}{}:
@@ -202,6 +210,12 @@ func (p *Player) Complete(ctx context.Context, state, cookie, code, providerErro
 }
 
 func (p *Player) deferred() *models.ServiceError {
+	p.mu.RLock()
+	assetUntil := p.assetBackoff
+	p.mu.RUnlock()
+	if p.now().Before(assetUntil) {
+		return &models.ServiceError{Code: "rate_limited", Status: 429, Message: "Spotify rate limit reached; wait before retrying", RetryAfter: max(1, int((assetUntil.Sub(p.now())+time.Second-1)/time.Second))}
+	}
 	if !p.now().Before(p.nextAttempt) {
 		return nil
 	}
@@ -444,31 +458,6 @@ func playlistID(uri string) string {
 	}
 	return id
 }
-func (p *Player) playlistName(ctx context.Context, uri string) string {
-	id := playlistID(uri)
-	if id == "" {
-		return ""
-	}
-	if e, ok := p.names[id]; ok && p.now().Before(e.expires) {
-		return e.name
-	}
-	if len(p.names) >= 32 {
-		p.names = make(map[string]nameEntry)
-	}
-	e := nameEntry{expires: p.now().Add(5 * time.Minute)}
-	b, status, err := p.request(ctx, http.MethodGet, "/playlists/"+id+"?fields=name")
-	if err == nil && status == 200 {
-		var v struct {
-			Name string `json:"name"`
-		}
-		if json.Unmarshal(b, &v) == nil {
-			e.name = models.Text(v.Name, 256)
-		}
-	}
-	p.names[id] = e
-	return e.name
-}
-
 func (p *Player) Poll(ctx context.Context) {
 	if !p.acquire(ctx) {
 		return
@@ -524,32 +513,31 @@ func (p *Player) Poll(ctx context.Context) {
 	s.Shuffle = u.Shuffle
 	s.Repeat = u.Repeat
 	s.Capabilities = u.capabilities(p.tokens.canControl)
+	var playlist, cover string
 	if u.Context != nil && u.Context.Type == "playlist" {
-		s.Context = models.Context{Type: "playlist", Name: p.playlistName(ctx, u.Context.URI)}
-	}
-	if p.tokens.access == "" {
-		p.fail(loginRequired())
-		return
+		playlist = playlistID(u.Context.URI)
 	}
 	for _, im := range u.Item.Album.Images {
 		if artwork.Trusted(im.URL) {
-			if a, err := p.art.FromSpotify(ctx, im.URL); err == nil {
-				s.Artwork = a
-			}
+			cover = im.URL
 			break
 		}
 	}
-	if e := p.deferred(); e != nil {
-		s.State = "unavailable"
-		s.Capabilities = models.Capabilities{}
-		p.save(s, e)
-		return
-	}
 	p.failures = 0
-	p.saveObservation(s, u.Device)
+	p.publishMetadata(ctx, s.Bounded(), u.Device, playlist, cover)
 }
 
 func (p *Player) Run(ctx context.Context, interval time.Duration) {
+	workerCtx, stop := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	workers.Go(func() { p.runAssets(workerCtx) })
+	defer func() {
+		stop()
+		p.mu.Lock()
+		p.cancelAssetsLocked()
+		p.mu.Unlock()
+		workers.Wait()
+	}()
 	p.Poll(ctx)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

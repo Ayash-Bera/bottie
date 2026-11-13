@@ -186,8 +186,24 @@ func (s *Store) FromSpotify(ctx context.Context, raw string) (models.Artwork, er
 			return models.Artwork{}, fmt.Errorf("artwork retry deferred")
 		}
 	}
-	s.put(id, entry{retry: time.Now().Add(time.Minute)})
+	retry := time.Now().Add(time.Minute)
+	s.put(id, entry{retry: retry})
 	s.mu.Unlock()
+	defer func() {
+		if ctx.Err() == context.Canceled {
+			s.mu.Lock()
+			if e, ok := s.entries[id]; ok && len(e.data) == 0 && e.retry == retry {
+				delete(s.entries, id)
+				for i, key := range s.order {
+					if key == id {
+						s.order = append(s.order[:i], s.order[i+1:]...)
+						break
+					}
+				}
+			}
+			s.mu.Unlock()
+		}
+	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return models.Artwork{}, fmt.Errorf("create artwork request: %w", err)

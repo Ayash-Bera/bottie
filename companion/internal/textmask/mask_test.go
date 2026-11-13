@@ -33,6 +33,24 @@ func example() models.Playback {
 	return p
 }
 
+func TestClockDoesNotChangeTextIdentity(t *testing.T) {
+	r := &fakeRenderer{}
+	s := newStore(r)
+	p := example()
+	d, err := s.Prepare(context.Background(), p)
+	if err != nil || d == nil {
+		t.Fatal(err)
+	}
+	calls := r.calls
+	for _, offset := range []int{-840, 0, 330, 840} {
+		p.Clock = &models.Clock{UnixMS: models.MinClockMS + int64(offset+840)*60000, UTCOffsetMin: offset}
+		next, err := s.Prepare(context.Background(), p)
+		if err != nil || next == nil || next.URL != d.URL || r.calls != calls {
+			t.Fatal("clock regenerated text bundle")
+		}
+	}
+}
+
 func TestNativePredicate(t *testing.T) {
 	for _, tt := range []struct {
 		text string

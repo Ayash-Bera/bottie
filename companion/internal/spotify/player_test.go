@@ -221,6 +221,7 @@ func TestPollCacheRestrictionsAndFallback(t *testing.T) {
 			})
 			authorize(p)
 			p.Poll(context.Background())
+			finishTestAssets(p)
 			s, e := p.Snapshot()
 			if scenario == "unsupported_type" {
 				if e == nil || s.State != "unavailable" {

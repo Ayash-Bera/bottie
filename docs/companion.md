@@ -53,6 +53,8 @@ The opt-in [ESP transport](../firmware/network/README.md) accepts an IPv4 litera
 | --- | --- | --- |
 | BOTTIE_BRIDGE_BIND | 127.0.0.1:8788 | Specific private or loopback IPv4 literal and port; no wildcard, public IP or port 8787 |
 | BOTTIE_BRIDGE_TOKEN_FILE | required | Absolute path to a regular 0600 file, no symlink; 32..256 letters, digits or `-._~+/=`, optional final newline |
+| BOTTIE_BRIDGE_TEXT_MASKS | false | true enables the pinned Bengali/Japanese shaping stack described below |
+| BOTTIE_CLOCK_ZONE | Asia/Kolkata | Valid IANA timezone name; `Local` is rejected; timezone data is embedded |
 
 Every route requires the separate device bearer. Only these method/path pairs are forwarded:
 
@@ -136,9 +138,30 @@ On this KDE-backed Hyprland setup, the companion unit activates the installed `o
 
 The existing `hyprland.conf` sources `UserConfigs/Startup_Apps.conf`. The installed handoff there is `exec-once = /usr/bin/fish --no-config -c 'if test -x /usr/lib/pam_kwallet_init; /usr/lib/pam_kwallet_init; end'`. It executes in the desktop environment, without relying on XDG autostart or importing a PAM socket into the user manager. The guard leaves sessions usable before the package is installed. No wallet password or token is included. A private copy of the original startup file and the previous binaries is retained under `host-runtime/before-keyring` for rollback.
 
-Polling caches playback independently of device GET requests. It uses `/v1/me/player`, optionally resolves playlist names with `fields=name`, and caches names for five minutes (maximum 32). Inaccessible playlist names fall back to the album. Episodes and ads produce unavailable state; this milestone renders music tracks only. Inactive/restricted devices and denied actions disable controls. Both flat action restrictions and deployed `actions.disallows` wrappers are supported; repeat is conservatively disabled if either repeat mode is forbidden.
+Polling caches playback independently of device GET requests. A successful `/v1/me/player` read publishes bounded title, artist, album, progress and control capabilities before optional context or artwork work. A changed track or metadata identity immediately drops old artwork and uses the album heading until its own optional results arrive. Episodes and ads produce unavailable state; this milestone renders music tracks only. Inactive/restricted devices and denied actions disable controls. Both flat action restrictions and deployed `actions.disallows` wrappers are supported; repeat is conservatively disabled if either repeat mode is forbidden.
 
-Rate limits honor `Retry-After` seconds or HTTP dates. Missing/invalid retry values and transient errors use exponential delays from 2 to 60 seconds. Delay applies across token refresh, polls, playlist reads and controls. Very large retry values are bounded at ten years. No automatic replay follows a network error for next/previous. A 401 permits one refresh and retry. A 204 playback response becomes idle. Requests are canceled at shutdown. See [rate limits](https://developer.spotify.com/documentation/web-api/concepts/rate-limits).
+One cancelable worker resolves playlist names with `fields=name`, then downloads artwork. It keeps one replaceable pending job, coalesces identical in-flight identities and never holds the control-operation lock across optional HTTP work. Each optional request has an eight-second deadline, so two sequential requests can occupy the worker for up to sixteen seconds without withholding core metadata or guarded controls. Shutdown, reauthorization and identity changes cancel obsolete jobs. Results attach only to the exact current track, bounded metadata and control generation while its observation is fresh; completing an asset never advances `updated_at_ms`.
+
+Playlist names have a maximum 32-entry cache: successful names and 403/404 fallbacks last five minutes; other optional errors last one minute, with 429 using Retry-After instead. Inaccessible names fall back to the album. Optional reads use the captured authorization without replay or token refresh; the next primary player read handles refresh. Artwork retains its bounded cache and failure delay. Cancellation releases only its matching incomplete artwork cache entry, allowing a new identity to retry the same cover URL.
+
+Rate limits honor `Retry-After` seconds or HTTP dates. Missing/invalid retry values and transient primary-request errors use exponential delays from 2 to 60 seconds. Delay applies across token refresh, polls, playlist reads and controls; an optional playlist 429 also defers subsequent primary API operations. Very large retry values are bounded at ten years. Control writes are never replayed, including after 401 or an ambiguous network failure. A primary GET 401 permits one refresh and retry. A 204 playback response becomes idle. Requests are canceled at shutdown. See [rate limits](https://developer.spotify.com/documentation/web-api/concepts/rate-limits).
+
+The gateway adds an optional [clock](../protocol/clock.md) in every playback state. It uses its own current time and the configured timezone, independently of the Spotify observation. Invalid optional clock data is ignored without discarding playback. Clock ticks do not alter control generations or text-mask cache identity. Older firmware can ignore the additive field.
+
+## Efficiency verification and runtime handoff
+
+`TestEfficiencyMeasurement` uses local fake servers with each optional response held for 200 ms. A guarded control is issued only after the optional request has started. Five repetitions per case used the same harness and Go 1.26 toolchain on Linux x86-64 against baseline `e86e60b1` and this implementation. The medians below measure first observed metadata and actual synthetic control arrival at the fake upstream, not physical ESP response or Spotify latency.
+
+| Held requests | Metadata before / after (ms) | Control arrival before / after (ms) |
+| --- | --- | --- |
+| Playlist context | 202.30 / 0.13 | 201.03 / 0.18 |
+| Artwork | 202.26 / 0.14 | 200.97 / 0.19 |
+| Context and artwork | 403.34 / 0.13 | 401.69 / 0.18 |
+| Both, plus a 75 ms fresh-player check | 402.92 / 0.16 | 477.14 / 75.48 |
+
+The fresh active-player check remains on the control path. These results remove optional-asset waiting; they do not promise sub-millisecond commands on a network. Run the harness with `go test -count=1 -run '^TestEfficiencyMeasurement$' -v ./internal/spotify`. Functional tests separately hold requests until explicitly released and verify control arrival, cancellation, same-identity coalescing, late-result rejection and error backoff.
+
+The efficiency upgrade requires a tested companion and gateway pair. Stage immutable binaries, preserve the private environment/bearer/fonts and save the existing user-unit configuration for rollback. Stop the owning `bottie-gateway.service` and `bottie-companion.service` units before switching ExecStart paths, rather than killing their PIDs while Restart=on-failure could respawn them. Minimal unit drop-ins select those exact binaries, explicit `BOTTIE_TOKEN_STORE=memory`, text masks and `BOTTIE_CLOCK_ZONE=Asia/Kolkata`; existing enablement remains unchanged. The binaries then persist across desktop login, but memory mode still requires Connect Spotify after a companion process or PC restart. This handoff does not establish protected-login recovery or change packages, PAM, wallet protection or device credentials. Verify the replacement first, then connect at `http://127.0.0.1:8787/`.
 
 ## Limits and status
 

@@ -75,6 +75,7 @@ type Playback struct {
 	VolumePercent *int         `json:"volume_percent"`
 	ControlTarget string       `json:"control_target"`
 	TextMask      *TextMask    `json:"text_mask,omitempty"`
+	Clock         *Clock       `json:"clock,omitempty"`
 }
 
 func Empty(state string) Playback {
@@ -100,6 +101,13 @@ func Text(s string, limit int) string {
 }
 
 func (p Playback) Bounded() Playback {
+	if p.Clock != nil {
+		clock := *p.Clock
+		p.Clock = nil
+		if clock.Valid() {
+			p.Clock = &clock
+		}
+	}
 	p.SchemaVersion = 1
 	switch p.State {
 	case "playing", "paused", "idle", "unavailable":

@@ -7,12 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+	_ "time/tzdata"
 )
 
 type Bridge struct {
 	Bind      string
 	Token     string
 	TextMasks bool
+	ClockZone *time.Location
 }
 
 func LoadBridge() (Bridge, error) { return ParseBridge(os.Getenv) }
@@ -20,6 +23,15 @@ func LoadBridge() (Bridge, error) { return ParseBridge(os.Getenv) }
 func ParseBridge(get func(string) string) (Bridge, error) {
 	c := Bridge{Bind: get("BOTTIE_BRIDGE_BIND")}
 	path := get("BOTTIE_BRIDGE_TOKEN_FILE")
+	zone := get("BOTTIE_CLOCK_ZONE")
+	if zone == "" {
+		zone = "Asia/Kolkata"
+	}
+	var err error
+	c.ClockZone, err = time.LoadLocation(zone)
+	if err != nil || zone == "Local" {
+		return Bridge{}, fmt.Errorf("BOTTIE_CLOCK_ZONE must name a valid IANA timezone, for example Asia/Kolkata")
+	}
 	switch get("BOTTIE_BRIDGE_TEXT_MASKS") {
 	case "true":
 		c.TextMasks = true

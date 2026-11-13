@@ -61,6 +61,33 @@ func TestCachedReadsDuringDownload(t *testing.T) {
 	<-done
 }
 
+func TestCanceledDownloadDoesNotPoisonRetry(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	done := make(chan struct{})
+	var image bytes.Buffer
+	if err := png.Encode(&image, Original(0)); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	s := New(96, &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			close(started)
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(image.Bytes()))}, nil
+	})})
+	go func() { _, _ = s.FromSpotify(ctx, "https://i.scdn.co/image/cancel"); close(done) }()
+	<-started
+	cancel()
+	<-done
+	if _, err := s.FromSpotify(context.Background(), "https://i.scdn.co/image/cancel"); err != nil || calls != 2 {
+		t.Fatal("canceled identity blocked next legitimate fetch", err)
+	}
+}
+
 func TestAspectFitAndBounds(t *testing.T) {
 	for _, dims := range [][2]int{{32, 16}, {16, 32}, {16, 16}} {
 		t.Run(fmt.Sprint(dims), func(t *testing.T) {

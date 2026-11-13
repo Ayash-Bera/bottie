@@ -58,6 +58,10 @@ func (p *Player) DeviceStatus() DeviceStatus {
 func (p *Player) saveObservation(s models.Playback, d *upstreamDevice) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.saveObservationLocked(s, d)
+}
+
+func (p *Player) saveObservationLocked(s models.Playback, d *upstreamDevice) {
 	p.device = DeviceStatus{UpdatedAtMS: s.UpdatedAtMS}
 	if d != nil {
 		p.device.Active, p.device.Restricted = copyValue(d.Active), copyValue(d.Restricted)

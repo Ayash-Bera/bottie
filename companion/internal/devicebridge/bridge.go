@@ -34,6 +34,7 @@ type bridge struct {
 	log    *slog.Logger
 	slots  chan struct{}
 	masks  *textmask.Store
+	now    func() time.Time
 }
 
 func New(cfg config.Bridge, log *slog.Logger) http.Handler {
@@ -59,7 +60,14 @@ func newBridge(cfg config.Bridge, log *slog.Logger, transport http.RoundTripper)
 }
 
 func bridgeWithMasks(cfg config.Bridge, log *slog.Logger, transport http.RoundTripper, masks *textmask.Store) http.Handler {
-	b := &bridge{cfg: cfg, log: log, masks: masks, slots: make(chan struct{}, 8), client: &http.Client{
+	return bridgeWithClock(cfg, log, transport, masks, time.Now)
+}
+
+func bridgeWithClock(cfg config.Bridge, log *slog.Logger, transport http.RoundTripper, masks *textmask.Store, now func() time.Time) http.Handler {
+	if cfg.ClockZone == nil {
+		cfg.ClockZone = time.FixedZone("Asia/Kolkata", 330*60)
+	}
+	b := &bridge{cfg: cfg, log: log, masks: masks, now: now, slots: make(chan struct{}, 8), client: &http.Client{
 		Transport: transport,
 		Timeout:   8 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -282,6 +290,13 @@ func (b *bridge) forward(w http.ResponseWriter, r *http.Request) {
 				valid = false
 			}
 			p = p.Bounded()
+			p.Clock = nil
+			now := b.now()
+			_, offset := now.In(b.cfg.ClockZone).Zone()
+			clock := models.Clock{UnixMS: now.UnixMilli(), UTCOffsetMin: offset / 60}
+			if clock.Valid() {
+				p.Clock = &clock
+			}
 			// Only this gateway may advertise its locally generated bundles.
 			p.TextMask = nil
 			if valid && b.masks != nil {

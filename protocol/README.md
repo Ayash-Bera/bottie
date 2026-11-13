@@ -1,5 +1,7 @@
 # Bottie protocol v1
 
+The optional [clock extension](clock.md) carries bounded UTC milliseconds and a local minute offset independently of playback freshness and control/text identity. Invalid optional clock data is ignored by consumers.
+
 The companion owns account access, metadata, controls and artwork conversion. The device owns rendering and touch. No account credentials cross this interface. HTTP is intended for loopback or a trusted local network. Configure device bearer authentication before binding to a non-loopback address.
 
 ## Playback
